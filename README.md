@@ -2,7 +2,7 @@
 
 **Symphony turns project work into isolated, autonomous implementation runs, so teams can manage work instead of supervising coding agents.**
 
-> Harness Engineering is exactly what I want.
+> Harness Engineering is exactly what I want!
 > Not vibe coding. Not just giving OpenClaw a sentence and asking it to orchestrate the rest.
 
 `symphony-ts` is a TypeScript implementation of the original
