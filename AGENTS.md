@@ -52,3 +52,5 @@ Use `IMPLEMENTATION_PLAN.md` as the required development sequence: contributors 
 ## Branching & Worktree Workflow
 
 Tasks 1 and 2 may be developed directly in the main working copy. For every task after Task 2, create a dedicated worktree under `.worktrees/` and do the implementation on a separate branch. Complete the work there, push the branch, and open a pull request before merging. Example flow: `git worktree add .worktrees/task-3 -b task-3`, implement the change in that worktree, then submit a PR for review.
+
+After finishing any task, verify that the implementation matches `SPEC.upstream.md` without behavioral or scope drift. Once that check passes, open the pull request immediately rather than batching multiple tasks into one PR.
