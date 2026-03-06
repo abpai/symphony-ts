@@ -100,13 +100,18 @@ Last updated: 2026-03-06
 - Run local fake-tracker/fake-codex orchestration flow, fix gaps, and verify full Section 18.1 coverage plus selected extensions.
 - Parallelizable: no
 
-### 0.3 Parallel Work Groups
+### 0.3 Strict Parallel Sets
 
-- Group A: `1`, `2`, `3`, `4`, `6`
-- Group B: `7`, `8`, `9`
-- Group C: `10`, `11`, `12`
-- Group D: `14`, `15`, `16`, `17`
-- Group E: `13`, `18`
+The previous "group" concept was too loose. These sets mean strict parallelism after prerequisites are satisfied, not just "same broad phase."
+
+- Prerequisite bootstrapping: `1`
+- Parallel Set P1 after `1`: `2`
+- Parallel Set P2 after `1` and `2`: `3`, `6`
+- Parallel Set P3 after `1`, with partial dependency satisfaction from earlier sets as needed: `4`, `8`, `9`, `14`, `16`, `17`
+- Parallel Set P4 after `3`, `6`, `8`, and `9` as applicable: `5`, `7`, `10`, `12`
+- Parallel Set P5 after `4`, `7`, `9`, `12`, and `14` as applicable: `11`, `15`
+- Parallel Set P6 after `11` and `12`: `13`
+- Parallel Set P7 after `13`, `15`, and sufficient test coverage in `17`: `18`
 
 ### 0.4 Critical Dependency Chain
 
@@ -121,13 +126,17 @@ Last updated: 2026-03-06
 9. `14` -> `15`
 10. `13` + `15` + `17` -> `18`
 
-### 0.5 Recommended Practical Wave Order
+### 0.5 Recommended Wave Order
 
-- Wave 1: `1`, `2`, `3`, `4`, `6`
-- Wave 2: `5`, `7`, `8`, `9`, `17`
-- Wave 3: `10`, `11`, `12`, `14`, `16`
-- Wave 4: `13`, `15`, `17`
-- Wave 5: `18`
+Waves are execution-start order, not strict independence groups.
+
+- Wave 1: `1`
+- Wave 2: `2`
+- Wave 3: `3`, `4`, `6`
+- Wave 4: `5`, `7`, `8`, `9`, `14`, `16`, `17`
+- Wave 5: `10`, `11`, `12`
+- Wave 6: `13`, `15`
+- Wave 7: `18`
 
 ## 1. Goal
 
