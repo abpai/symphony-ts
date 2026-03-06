@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 
 import type { Workspace } from "../domain/model.js";
 import { ERROR_CODES } from "../errors/codes.js";
+import type { WorkspaceHookRunner } from "./hooks.js";
 import {
   WorkspacePathError,
   type WorkspacePathInfo,
@@ -20,15 +21,18 @@ interface FileSystemLike {
 export interface WorkspaceManagerOptions {
   root: string;
   fs?: FileSystemLike;
+  hooks?: WorkspaceHookRunner | null;
 }
 
 export class WorkspaceManager {
   readonly root: string;
   readonly #fs: FileSystemLike;
+  readonly #hooks: WorkspaceHookRunner | null;
 
   constructor(options: WorkspaceManagerOptions) {
     this.root = options.root;
     this.#fs = options.fs ?? fs;
+    this.#hooks = isHookRunner(options.hooks) ? options.hooks : null;
   }
 
   resolveForIssue(issueIdentifier: string): WorkspacePathInfo {
@@ -42,12 +46,20 @@ export class WorkspaceManager {
     try {
       await this.#fs.mkdir(workspaceRoot, { recursive: true });
       const createdNow = await this.#ensureWorkspaceDirectory(workspacePath);
-
-      return {
+      const workspace = {
         path: workspacePath,
         workspaceKey,
         createdNow,
       };
+
+      if (createdNow) {
+        await this.#hooks?.run({
+          name: "afterCreate",
+          workspacePath,
+        });
+      }
+
+      return workspace;
     } catch (error) {
       if (error instanceof WorkspacePathError) {
         throw error;
@@ -65,6 +77,14 @@ export class WorkspaceManager {
     const { workspacePath } = this.resolveForIssue(issueIdentifier);
 
     try {
+      const existsAsDirectory = await this.#workspaceExists(workspacePath);
+      if (existsAsDirectory) {
+        await this.#hooks?.runBestEffort({
+          name: "beforeRemove",
+          workspacePath,
+        });
+      }
+
       await this.#fs.rm(workspacePath, { force: true, recursive: true });
       return true;
     } catch (error) {
@@ -114,6 +134,32 @@ export class WorkspaceManager {
       throw error;
     }
   }
+
+  async #workspaceExists(workspacePath: string): Promise<boolean> {
+    try {
+      const current = await this.#fs.lstat(workspacePath);
+      return current.isDirectory();
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        return false;
+      }
+
+      throw error;
+    }
+  }
+}
+
+function isHookRunner(
+  value: WorkspaceManagerOptions["hooks"],
+): value is WorkspaceHookRunner {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "run" in value &&
+    typeof value.run === "function" &&
+    "runBestEffort" in value &&
+    typeof value.runBestEffort === "function"
+  );
 }
 
 function isMissingPathError(

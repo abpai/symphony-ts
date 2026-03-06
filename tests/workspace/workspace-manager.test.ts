@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ERROR_CODES } from "../../src/errors/codes.js";
-import { WorkspaceManager, type WorkspacePathError } from "../../src/index.js";
+import {
+  WorkspaceHookRunner,
+  WorkspaceManager,
+  type WorkspacePathError,
+} from "../../src/index.js";
 
 const roots: string[] = [];
 
@@ -40,6 +44,65 @@ describe("WorkspaceManager", () => {
 
     expect(workspace.path).toBe(join(root, "ABC-123"));
     expect(workspace.createdNow).toBe(false);
+  });
+
+  it("runs afterCreate only for newly created workspaces", async () => {
+    const root = await createRoot();
+    const hookCalls: string[] = [];
+    const hooks = new WorkspaceHookRunner({
+      config: {
+        afterCreate: "prepare",
+        beforeRun: null,
+        afterRun: null,
+        beforeRemove: null,
+        timeoutMs: 100,
+      },
+      execute: async (_script, options) => {
+        hookCalls.push(options.cwd);
+        return {
+          exitCode: 0,
+          signal: null,
+          stdout: "",
+          stderr: "",
+        };
+      },
+    });
+    const manager = new WorkspaceManager({ root, hooks });
+
+    const first = await manager.createForIssue("ABC-123");
+    await manager.createForIssue("ABC-123");
+
+    expect(hookCalls).toEqual([first.path]);
+  });
+
+  it("runs beforeRemove as a best-effort hook when deleting an existing workspace", async () => {
+    const root = await createRoot();
+    const hookCalls: string[] = [];
+    const hooks = new WorkspaceHookRunner({
+      config: {
+        afterCreate: null,
+        beforeRun: null,
+        afterRun: null,
+        beforeRemove: "cleanup",
+        timeoutMs: 100,
+      },
+      execute: async (_script, options) => {
+        hookCalls.push(options.cwd);
+        return {
+          exitCode: 1,
+          signal: null,
+          stdout: "",
+          stderr: "ignored",
+        };
+      },
+    });
+    const manager = new WorkspaceManager({ root, hooks });
+
+    const workspace = await manager.createForIssue("ABC-123");
+    const removed = await manager.removeForIssue("ABC-123");
+
+    expect(removed).toBe(true);
+    expect(hookCalls).toEqual([workspace.path]);
   });
 
   it("fails safely when the workspace path already exists as a file", async () => {
