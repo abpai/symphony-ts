@@ -1,6 +1,6 @@
 # Symphony TypeScript Full Implementation Plan
 
-Last updated: 2026-03-06
+Last updated: 2026-03-07
 
 ## 0. Task List and Execution Order
 
@@ -126,17 +126,50 @@ The previous "group" concept was too loose. These sets mean strict parallelism a
 9. `14` -> `15`
 10. `13` + `15` + `17` -> `18`
 
-### 0.5 Recommended Wave Order
+### 0.5 Recommended Execution Order From Current Baseline
 
-Waves are execution-start order, not strict independence groups.
+We are no longer using the earlier "wave" sequence as the active development order.
 
-- Wave 1: `1`
-- Wave 2: `2`
-- Wave 3: `3`, `4`, `6`
-- Wave 4: `5`, `7`, `8`, `9`, `14`, `16`, `17`
-- Wave 5: `10`, `11`, `12`
-- Wave 6: `13`, `15`
-- Wave 7: `18`
+Reason:
+
+- Starting `16` and `17` early created review noise and partial work before the runtime dependencies
+  were ready.
+- To reduce rework, we will continue from the latest no-conflict baseline on `main` and prioritize
+  tasks by dependency readiness and spec-complete integration value.
+
+Current confirmed baseline on `main`:
+
+- Completed and merged: `1`, `2`, `3`, `4`, `5`, `6`, `7`, `8`, `9`, `14`
+- Not yet complete on `main`: `10`, `11`, `12`, `13`, `15`, `16`, `17`, `18`
+
+Active execution policy:
+
+- Prefer the earliest task whose prerequisites are already satisfied.
+- Do not start a later task on `main` when its spec-complete behavior still depends on unfinished
+  earlier tasks, unless the work is explicitly marked as temporary groundwork in a separate branch.
+- Treat dependency order as the source of truth for continuation, not the older wave grouping.
+
+Recommended next-task order from the current baseline:
+
+1. `10` `linear_graphql` dynamic tool
+2. `12` Orchestrator core
+3. `11` Agent runner
+4. `15` HTTP observability server and dashboard
+5. `13` Orchestrator and agent integration
+6. `16` CLI completion
+7. `17` Conformance test matrix
+8. `18` End-to-end integration and hardening pass
+
+Notes on this order:
+
+- `10` is ready because `8` and `9` are already complete.
+- `12` is the next core runtime dependency for `11` and `13`.
+- `11` should follow `12` in practice so the runner is built against the real orchestrator contract,
+  even though parts of the implementation can be prepared earlier.
+- `15` should follow the merged `14` implementation and be in place before `16` is considered
+  complete, because `--port` must map to the real HTTP server behavior.
+- `17` continues throughout implementation, but it should not be treated as a substitute for the
+  unfinished runtime tasks it is meant to validate.
 
 ## 1. Goal
 
