@@ -2,8 +2,7 @@
 
 **Symphony turns project work into isolated, autonomous implementation runs, so teams can manage work instead of supervising coding agents.**
 
-> Harness Engineering, not vibe coding.
-> Orchestrate work with a purpose-built system, not by asking a general agent to supervise other agents.
+> Harness Engineering is exactly what I want.
 
 `symphony-ts` is a TypeScript implementation of the original
 [openai/symphony](https://github.com/openai/symphony) project.
