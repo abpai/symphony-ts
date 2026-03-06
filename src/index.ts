@@ -2,6 +2,7 @@ export * from "./agent/prompt-builder.js";
 export * from "./config/defaults.js";
 export * from "./config/config-resolver.js";
 export * from "./config/types.js";
+export * from "./codex/app-server-client.js";
 export * from "./config/workflow-loader.js";
 export * from "./config/workflow-watch.js";
 export * from "./domain/model.js";
