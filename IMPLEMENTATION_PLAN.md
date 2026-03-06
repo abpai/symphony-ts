@@ -171,6 +171,57 @@ Notes on this order:
 - `17` continues throughout implementation, but it should not be treated as a substitute for the
   unfinished runtime tasks it is meant to validate.
 
+### 0.6 Risk Areas and Validation Strategy
+
+The main project risk is no longer "building the wrong modules." The remaining risk is integrating
+the correct modules into a runtime that behaves exactly like the spec.
+
+Highest-risk areas:
+
+- `11` + `12` + `13`: runner/orchestrator/integration boundaries, especially worker exit reasons,
+  retry scheduling, release rules, continuation turns, and reconciliation transitions
+- `15` + `16`: real host lifecycle behavior, including HTTP server startup, `--port` precedence,
+  normal shutdown, abnormal exit handling, and CLI-visible failure semantics
+- `10`: dynamic tool advertisement and failure handling inside the live Codex session protocol
+- `18`: final end-to-end orchestration behavior across fake tracker + fake Codex + real workspace
+  lifecycle
+
+Execution rule for the remaining tasks:
+
+- Do not rely on final acceptance alone.
+- For high-risk tasks, add cross-module integration tests as soon as the dependency boundary exists.
+- Treat a task as complete only when the relevant spec bullets are covered by tests or by an
+  explicit integration harness that can be rerun deterministically.
+
+Required intermediate validation checkpoints:
+
+1. After `12`, add orchestrator integration tests against a fake worker/runner boundary.
+   Verify dispatch, claim, retry, release, reconcile, stall handling, and terminal cleanup before
+   the full agent runner is introduced.
+2. After `11`, add a single-issue integration flow using fake tracker + fake Codex + real
+   workspace/prompt plumbing.
+   This is the first point where we should expect one issue to run through a real execution path.
+3. After `15`, add host/HTTP integration tests covering snapshot exposure, refresh triggering, HTTP
+   route behavior, and listener lifecycle semantics.
+4. After `16`, validate the real CLI path against the real host implementation rather than a CLI-only
+   shell.
+   This includes workflow path handling, acknowledgement gating, `--port` override behavior, and
+   exit codes.
+
+Definition of "ready for final acceptance":
+
+- `13`, `15`, and `16` are complete and integrated together
+- `17` covers Sections `17.1` through `17.7`
+- The fake integration environment is capable of exercising the full runtime before `18` begins
+
+Practical expectation:
+
+- `11` is the earliest point where manual functional verification becomes meaningful
+- `13` + `15` + `16` is the earliest point where the whole system is feature-complete enough for a
+  serious product-level acceptance pass
+- `18` is still required to prove that the full implementation works as one system, not just as a
+  set of passing module tests
+
 ## 1. Goal
 
 Build a TypeScript implementation of Symphony that targets full spec conformance against `openai/symphony` `main` as of 2026-03-06, not an MVP.
