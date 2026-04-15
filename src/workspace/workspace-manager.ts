@@ -46,16 +46,16 @@ export class WorkspaceManager {
     try {
       await this.#fs.mkdir(workspaceRoot, { recursive: true });
       const createdNow = await this.#ensureWorkspaceDirectory(workspacePath);
-      const workspace = {
+      const workspace: Workspace = {
         path: workspacePath,
         workspaceKey,
         createdNow,
       };
 
       if (createdNow) {
-        await this.#hooks?.run({
+        await this.runHook({
           name: "afterCreate",
-          workspacePath,
+          workspace,
         });
       }
 
@@ -74,14 +74,23 @@ export class WorkspaceManager {
   }
 
   async removeForIssue(issueId: string): Promise<boolean> {
-    const { workspacePath } = this.resolveForIssue(issueId);
+    const { workspacePath, workspaceKey } = this.resolveForIssue(issueId);
+    const workspace: Workspace = {
+      path: workspacePath,
+      cwd: workspacePath,
+      environmentId: workspacePath,
+      workspaceKey,
+      provider: "local",
+      createdNow: false,
+    };
 
     try {
       const existsAsDirectory = await this.#workspaceExists(workspacePath);
       if (existsAsDirectory) {
-        await this.#hooks?.runBestEffort({
+        await this.runHook({
           name: "beforeRemove",
-          workspacePath,
+          workspace,
+          bestEffort: true,
         });
       }
 
@@ -94,6 +103,28 @@ export class WorkspaceManager {
         { cause: error },
       );
     }
+  }
+
+  async runHook(input: {
+    name: "afterCreate" | "beforeRun" | "afterRun" | "beforeRemove";
+    workspace: Workspace;
+    bestEffort?: boolean;
+  }): Promise<boolean> {
+    if (this.#hooks === null) {
+      return false;
+    }
+
+    if (input.bestEffort) {
+      return await this.#hooks.runBestEffort({
+        name: input.name,
+        workspacePath: input.workspace.cwd ?? input.workspace.path,
+      });
+    }
+
+    return await this.#hooks.run({
+      name: input.name,
+      workspacePath: input.workspace.cwd ?? input.workspace.path,
+    });
   }
 
   async #ensureWorkspaceDirectory(workspacePath: string): Promise<boolean> {

@@ -365,6 +365,12 @@ function createSnapshot(): RuntimeSnapshot {
         error: "no available orchestrator slots",
       },
     ],
+    agent_totals: {
+      input_tokens: 1200,
+      output_tokens: 800,
+      total_tokens: 2000,
+      seconds_running: 153.2,
+    },
     codex_totals: {
       input_tokens: 1200,
       output_tokens: 800,

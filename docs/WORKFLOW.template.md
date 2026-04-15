@@ -1,23 +1,26 @@
 ---
 # ============================================================
-# tracker — Issue tracker connection (currently only "linear")
+# tracker — Issue tracker connection (Linear or Jira)
 # ============================================================
 tracker:
-  # Tracker backend. Only "linear" is supported.
+  # Tracker backend. Supported values: "linear" or "jira".
   kind: linear
 
   # GraphQL endpoint for the Linear API.
   # Default: https://api.linear.app/graphql
   endpoint: https://api.linear.app/graphql
 
-  # Linear API key. Use $ENV_VAR syntax to read from environment,
-  # or set the LINEAR_API_KEY environment variable directly.
-  # Required for dispatch.
+  # Shared tracker credential field. Use $ENV_VAR syntax to read from environment.
   api_key: $LINEAR_API_KEY
 
-  # Linear project slug (the short identifier visible in issue URLs).
-  # Required for dispatch. Example: ENG, MYPROJECT-abc123
+  # Linear-only project slug (the short identifier visible in issue URLs).
   project_slug: YOUR_PROJECT_SLUG
+
+  # Jira-only settings.
+  base_url: https://your-company.atlassian.net
+  user_email: $JIRA_USER_EMAIL
+  project_key: YOUR_PROJECT_KEY
+  jql_filter: null
 
   # Issue states that are eligible for the agent to pick up.
   # Default: [Todo, In Progress]
@@ -37,14 +40,23 @@ polling:
   interval_ms: 30000
 
 # ============================================================
-# workspace — Per-issue working directory management
+# workspace — Per-issue working directory management (local or sandbox)
 # ============================================================
 workspace:
+  # Workspace provider. Default: local
+  provider: local
+
   # Root directory under which per-issue workspaces are created.
   # Supports ~ expansion, relative paths (resolved from WORKFLOW.md),
   # and $ENV_VAR references.
   # Default: <os.tmpdir()>/symphony_workspaces
   root: /tmp/symphony_workspaces
+
+  # Sandbox-only settings.
+  sandbox_api_url: $SANDBOX_API_URL
+  sandbox_api_token: $SANDBOX_API_TOKEN
+  sandbox_base_snapshot_id: null
+  sandbox_idle_timeout_ms: 300000
 
 # ============================================================
 # hooks — Shell commands run at workspace lifecycle events
@@ -91,27 +103,30 @@ agent:
   max_concurrent_agents_by_state: {}
 
 # ============================================================
-# codex — Codex app-server process configuration
+# agent_runtime — Runtime provider configuration
 # ============================================================
-codex:
-  # Shell command used to launch the Codex app-server.
+agent_runtime:
+  # Runtime provider. Supported values: stdio | http
+  provider: stdio
+
+  # Shell command used to launch the stdio runtime.
   # Add `--config shell_environment_policy.inherit=all` if agent turns
   # should inherit environment variables from the launching shell.
   # Default: codex app-server
   command: codex app-server
 
-  # Codex approval policy, passed through to the app-server.
+  # Approval policy passed through to the stdio runtime.
   # Common values depend on the installed Codex schema.
   # Example values: never, on-request, on-failure
   # Default: (not set — inherits Codex default)
   approval_policy: never
 
-  # Thread-level sandbox mode passed through to Codex.
+  # Thread-level sandbox mode passed through to the stdio runtime.
   # Example values: workspace-write
   # Default: (not set)
   thread_sandbox: null
 
-  # Per-turn sandbox policy passed through to Codex.
+  # Per-turn sandbox policy passed through to the stdio runtime.
   # Example:
   #   turn_sandbox_policy:
   #     type: workspaceWrite
@@ -129,7 +144,7 @@ codex:
   # Default: 3600000 (1 h)
   turn_timeout_ms: 3600000
 
-  # Maximum time in ms to wait for the next event from Codex before
+  # Maximum time in ms to wait for the next event from the agent runtime before
   # considering the stream stalled.
   # Default: 5000 (5 s)
   read_timeout_ms: 5000
@@ -138,6 +153,13 @@ codex:
   # declared stalled and stopped.
   # Default: 300000 (5 min)
   stall_timeout_ms: 300000
+
+  # HTTP-runtime-only settings.
+  base_url: $AGENT_RUNTIME_URL
+  api_token: $AGENT_RUNTIME_TOKEN
+  github_installation_id: null
+  auto_commit: true
+  auto_pr: true
 
 # ============================================================
 # server — Built-in HTTP status server (optional)
@@ -165,7 +187,7 @@ observability:
   render_interval_ms: 16
 ---
 
-You are implementing work for Linear issue {{ issue.identifier }}.
+You are implementing work for issue {{ issue.identifier }}.
 
 <!-- Replace the lines below with your actual agent instructions. -->
 
@@ -183,30 +205,14 @@ If this workflow needs environment variables from the launching shell:
 
 If the agent must call networked tools during a turn:
 
-1. Configure `codex.turn_sandbox_policy` with explicit `networkAccess: true`.
+1. Configure `agent_runtime.turn_sandbox_policy` (or legacy `codex.turn_sandbox_policy`) with explicit `networkAccess: true`.
 2. If a specific CLI still does not find usable credentials in your environment, provide that
    tool's credential via an env var such as `GH_TOKEN`, `GITHUB_TOKEN`, or a provider-specific API
    key.
 
 When finished:
 
-1. Update the Linear issue state to "Done" using the `linear_graphql` tool.
-   First, query the available workflow states to find the "Done" state ID:
-   ```graphql
-   query GetWorkflowStates {
-     workflowStates {
-       nodes { id name }
-     }
-   }
-   ```
-   Then update the issue:
-   ```graphql
-   mutation CompleteIssue($id: String!, $stateId: String!) {
-     issueUpdate(id: $id, input: { stateId: $stateId }) {
-       success
-     }
-   }
-   ```
+1. Update the tracker issue to its done/review destination using the tracker tool available for your provider (`linear_graphql` for Linear or `jira_rest` for Jira).
 
 2. Provide a summary:
    - What changed

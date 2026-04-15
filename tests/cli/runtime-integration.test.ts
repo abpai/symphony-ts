@@ -49,7 +49,7 @@ describe("runtime integration", () => {
     const root = await createTempDir("symphony-task16-runtime-");
     const logsRoot = join(root, "logs");
     const workspaceRoot = join(root, "workspaces");
-    const terminalWorkspace = join(workspaceRoot, "done-1");
+    const terminalWorkspace = join(workspaceRoot, "DONE-1");
 
     await mkdir(terminalWorkspace, { recursive: true });
     await writeFile(join(terminalWorkspace, "artifact.txt"), "stale\n", "utf8");
@@ -405,7 +405,7 @@ Implement {{ issue.identifier }} attempt={{ attempt }}
       stdout: new PassThrough(),
     });
 
-    const workspacePath = join(workspaceRoot, "issue-1");
+    const workspacePath = join(workspaceRoot, "ISSUE-1");
     await vi.waitFor(async () => {
       const state = await service.runtimeHost.getRuntimeSnapshot();
       expect(state.counts.running + state.counts.retrying).toBeGreaterThan(0);

@@ -13,6 +13,10 @@ export interface WorkflowTrackerConfig {
   projectSlug: string | null;
   activeStates: string[];
   terminalStates: string[];
+  baseUrl?: string | null;
+  userEmail?: string | null;
+  projectKey?: string | null;
+  jqlFilter?: string | null;
 }
 
 export interface WorkflowPollingConfig {
@@ -21,6 +25,11 @@ export interface WorkflowPollingConfig {
 
 export interface WorkflowWorkspaceConfig {
   root: string;
+  provider?: "local" | "sandbox" | string;
+  sandboxApiUrl?: string | null;
+  sandboxApiToken?: string | null;
+  sandboxBaseSnapshotId?: string | null;
+  sandboxIdleTimeoutMs?: number;
 }
 
 export interface WorkflowAgentConfig {
@@ -38,6 +47,23 @@ export interface WorkflowCodexConfig {
   turnTimeoutMs: number;
   readTimeoutMs: number;
   stallTimeoutMs: number;
+}
+
+export interface WorkflowAgentRuntimeConfig {
+  provider: "stdio" | "http" | string;
+  command: string;
+  approvalPolicy: unknown;
+  threadSandbox: unknown;
+  turnSandboxPolicy: unknown;
+  turnTimeoutMs: number;
+  readTimeoutMs: number;
+  stallTimeoutMs: number;
+  maxTurns: number;
+  baseUrl?: string | null;
+  apiToken?: string | null;
+  githubInstallationId?: string | null;
+  autoCommit?: boolean;
+  autoPr?: boolean;
 }
 
 export interface WorkflowServerConfig {
@@ -59,6 +85,7 @@ export interface ResolvedWorkflowConfig {
   hooks: WorkflowHooksConfig;
   agent: WorkflowAgentConfig;
   codex: WorkflowCodexConfig;
+  agentRuntime?: WorkflowAgentRuntimeConfig;
   server: WorkflowServerConfig;
   observability: WorkflowObservabilityConfig;
 }

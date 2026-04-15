@@ -67,6 +67,10 @@ export interface Workspace {
   path: string;
   workspaceKey: string;
   createdNow: boolean;
+  cwd?: string;
+  environmentId?: string;
+  provider?: "local" | "sandbox";
+  snapshotId?: string | null;
 }
 
 export interface RunAttempt {
@@ -83,10 +87,18 @@ export interface LiveSession {
   sessionId: string | null;
   threadId: string | null;
   turnId: string | null;
+  processId?: string | null;
+  agentProcessId?: string | null;
   codexAppServerPid: string | null;
+  lastAgentEvent?: string | null;
+  lastAgentTimestamp?: string | null;
+  lastAgentMessage?: string | null;
   lastCodexEvent: string | null;
   lastCodexTimestamp: string | null;
   lastCodexMessage: string | null;
+  agentInputTokens?: number;
+  agentOutputTokens?: number;
+  agentTotalTokens?: number;
   codexInputTokens: number;
   codexOutputTokens: number;
   codexTotalTokens: number;
@@ -105,22 +117,27 @@ export interface RetryEntry {
   error: string | null;
 }
 
-export interface CodexTotals {
+export interface AgentTotals {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
   secondsRunning: number;
 }
 
-export type CodexRateLimits = Record<string, unknown> | null;
+export type AgentRateLimits = Record<string, unknown> | null;
+export type CodexTotals = AgentTotals;
+export type CodexRateLimits = AgentRateLimits;
 
 export interface RunningEntry extends LiveSession {
   issue: Issue;
   identifier: string;
   retryAttempt: number | null;
   startedAt: string;
+  workspacePath?: string | null;
   workerHandle: unknown;
   monitorHandle: unknown;
+  runtimeProvider?: "stdio" | "http" | string;
+  workspaceProvider?: "local" | "sandbox" | string;
 }
 
 export interface OrchestratorState {
@@ -130,6 +147,8 @@ export interface OrchestratorState {
   claimed: Set<string>;
   retryAttempts: Record<string, RetryEntry>;
   completed: Set<string>;
+  agentTotals: AgentTotals;
+  agentRateLimits: AgentRateLimits;
   codexTotals: CodexTotals;
   codexRateLimits: CodexRateLimits;
 }
@@ -151,10 +170,18 @@ export function createEmptyLiveSession(): LiveSession {
     sessionId: null,
     threadId: null,
     turnId: null,
+    processId: null,
+    agentProcessId: null,
     codexAppServerPid: null,
+    lastAgentEvent: null,
+    lastAgentTimestamp: null,
+    lastAgentMessage: null,
     lastCodexEvent: null,
     lastCodexTimestamp: null,
     lastCodexMessage: null,
+    agentInputTokens: 0,
+    agentOutputTokens: 0,
+    agentTotalTokens: 0,
     codexInputTokens: 0,
     codexOutputTokens: 0,
     codexTotalTokens: 0,
@@ -169,6 +196,13 @@ export function createInitialOrchestratorState(input: {
   pollIntervalMs: number;
   maxConcurrentAgents: number;
 }): OrchestratorState {
+  const agentTotals: AgentTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    secondsRunning: 0,
+  };
+
   return {
     pollIntervalMs: input.pollIntervalMs,
     maxConcurrentAgents: input.maxConcurrentAgents,
@@ -176,12 +210,9 @@ export function createInitialOrchestratorState(input: {
     claimed: new Set<string>(),
     retryAttempts: {},
     completed: new Set<string>(),
-    codexTotals: {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      secondsRunning: 0,
-    },
+    agentTotals,
+    agentRateLimits: null,
+    codexTotals: agentTotals,
     codexRateLimits: null,
   };
 }

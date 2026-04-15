@@ -29,6 +29,8 @@ import {
 const DEFAULT_SNAPSHOT_TIMEOUT_MS = 1_000;
 
 export interface IssueDetailRunningState {
+  runtime_provider?: string;
+  process_id?: string | null;
   session_id: string | null;
   turn_count: number;
   state: string;
@@ -63,6 +65,11 @@ export interface IssueDetailResponse {
   running: IssueDetailRunningState | null;
   retry: IssueDetailRetryState | null;
   logs: {
+    agent_session_logs?: Array<{
+      label: string;
+      path: string;
+      url: string | null;
+    }>;
     codex_session_logs: Array<{
       label: string;
       path: string;

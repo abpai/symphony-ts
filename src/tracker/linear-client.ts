@@ -268,7 +268,11 @@ export class LinearTrackerClient implements IssueTracker {
         signal: controller.signal,
       });
     } catch (error) {
-      throw toTrackerRequestError(error);
+      throw toTrackerRequestError({
+        error,
+        requestCode: ERROR_CODES.linearApiRequest,
+        message: "Linear request failed before a valid response was received.",
+      });
     } finally {
       clearTimeout(timeout);
     }

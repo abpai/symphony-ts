@@ -1,12 +1,13 @@
 import { rm } from "node:fs/promises";
 
 import {
-  CodexAppServerClient,
-  type CodexClientEvent,
-  type CodexDynamicTool,
-  type CodexTurnResult,
-} from "../codex/app-server-client.js";
-import { createLinearGraphqlDynamicTool } from "../codex/linear-graphql-tool.js";
+  type AgentRuntime,
+  type AgentRuntimeEvent,
+  type CreateAgentRuntimeOptions,
+  createAgentRuntime,
+} from "../agent-runtime/interface.js";
+import type { AgentSession } from "../agent-runtime/types.js";
+import type { CodexAppServerClientOptions } from "../codex/app-server-client.js";
 import type { ResolvedWorkflowConfig } from "../config/types.js";
 import {
   type Issue,
@@ -17,17 +18,17 @@ import {
   createEmptyLiveSession,
   normalizeIssueState,
 } from "../domain/model.js";
-import { applyCodexEventToSession } from "../logging/session-metrics.js";
+import { applyAgentEventToSession } from "../logging/session-metrics.js";
 import type { IssueTracker } from "../tracker/tracker.js";
 import { WorkspaceHookRunner } from "../workspace/hooks.js";
-import { validateWorkspaceCwd } from "../workspace/path-safety.js";
-import { WorkspaceManager } from "../workspace/workspace-manager.js";
 import {
-  type BuildTurnPromptInput,
-  buildTurnPrompt,
-} from "./prompt-builder.js";
+  type WorkspaceProvider,
+  createWorkspaceProvider,
+} from "../workspace/interface.js";
+import { validateWorkspaceCwd } from "../workspace/path-safety.js";
+import { buildTurnPrompt } from "./prompt-builder.js";
 
-export interface AgentRunnerEvent extends CodexClientEvent {
+export interface AgentRunnerEvent extends AgentRuntimeEvent {
   issueId: string;
   issueIdentifier: string;
   attempt: number | null;
@@ -35,36 +36,49 @@ export interface AgentRunnerEvent extends CodexClientEvent {
   turnCount: number;
 }
 
-export interface AgentRunnerCodexClient {
-  startSession(input: {
-    prompt: string;
-    title: string;
-  }): Promise<CodexTurnResult>;
-  continueTurn(prompt: string, title: string): Promise<CodexTurnResult>;
-  close(): Promise<void>;
-}
-
-export interface AgentRunnerCodexClientFactoryInput {
-  command: string;
-  cwd: string;
-  approvalPolicy: unknown;
-  threadSandbox: unknown;
-  turnSandboxPolicy: unknown;
-  readTimeoutMs: number;
-  turnTimeoutMs: number;
-  stallTimeoutMs: number;
-  dynamicTools: CodexDynamicTool[];
-  onEvent: (event: CodexClientEvent) => void;
-}
+export type AgentRunnerCodexClientFactoryInput = CodexAppServerClientOptions & {
+  onEvent: NonNullable<CodexAppServerClientOptions["onEvent"]>;
+};
 
 export interface AgentRunnerOptions {
   config: ResolvedWorkflowConfig;
   tracker: IssueTracker;
-  workspaceManager?: WorkspaceManager;
+  workspaceProvider?: WorkspaceProvider;
   hooks?: WorkspaceHookRunner;
-  createCodexClient?: (
-    input: AgentRunnerCodexClientFactoryInput,
-  ) => AgentRunnerCodexClient;
+  runtime?: AgentRuntime;
+  createAgentRuntime?: () => AgentRuntime;
+  createCodexClient?: (input: AgentRunnerCodexClientFactoryInput) => {
+    startSession(input: { prompt: string; title: string }): Promise<{
+      status: "completed" | "failed" | "cancelled";
+      threadId: string;
+      turnId: string;
+      sessionId: string;
+      usage: {
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+      } | null;
+      rateLimits: Record<string, unknown> | null;
+      message: string | null;
+    }>;
+    continueTurn(
+      prompt: string,
+      title: string,
+    ): Promise<{
+      status: "completed" | "failed" | "cancelled";
+      threadId: string;
+      turnId: string;
+      sessionId: string;
+      usage: {
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+      } | null;
+      rateLimits: Record<string, unknown> | null;
+      message: string | null;
+    }>;
+    close(): Promise<void>;
+  };
   fetchFn?: typeof fetch;
   onEvent?: (event: AgentRunnerEvent) => void;
 }
@@ -81,7 +95,10 @@ export interface AgentRunResult {
   runAttempt: RunAttempt;
   liveSession: LiveSession;
   turnsCompleted: number;
-  lastTurn: CodexTurnResult | null;
+  lastTurn: {
+    outcome: string;
+    message: string | null;
+  } | null;
   rateLimits: Record<string, unknown> | null;
 }
 
@@ -119,46 +136,51 @@ export class AgentRunnerError extends Error {
 
 export class AgentRunner {
   private readonly config: ResolvedWorkflowConfig;
-
   private readonly tracker: IssueTracker;
-
-  private readonly workspaceManager: WorkspaceManager;
-
-  private readonly hooks: WorkspaceHookRunner;
-
-  private readonly createCodexClient: (
-    input: AgentRunnerCodexClientFactoryInput,
-  ) => AgentRunnerCodexClient;
-
-  private readonly fetchFn: typeof fetch | undefined;
-
+  private readonly workspaceProvider: WorkspaceProvider;
+  private readonly runtime: AgentRuntime;
   private readonly onEvent: ((event: AgentRunnerEvent) => void) | undefined;
 
   constructor(options: AgentRunnerOptions) {
     this.config = options.config;
     this.tracker = options.tracker;
-    this.hooks =
+    const hookRunner =
       options.hooks ??
       new WorkspaceHookRunner({
         config: options.config.hooks,
       });
-    this.workspaceManager =
-      options.workspaceManager ??
-      new WorkspaceManager({
-        root: options.config.workspace.root,
-        hooks: this.hooks,
+    this.workspaceProvider =
+      options.workspaceProvider ??
+      createWorkspaceProvider(options.config.workspace, {
+        hooksConfig: options.config.hooks,
+        hookRunner,
+        ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
+        logicalOnly:
+          (options.config.workspace.provider ?? "local") === "sandbox" &&
+          (options.config.agentRuntime?.provider ?? "stdio") === "http",
       });
-    this.createCodexClient =
-      options.createCodexClient ?? createDefaultCodexClient;
-    this.fetchFn = options.fetchFn;
+    this.runtime =
+      options.runtime ??
+      options.createAgentRuntime?.() ??
+      createAgentRuntime({
+        config: getAgentRuntimeConfig(options.config),
+        trackerConfig: options.config.tracker,
+        ...(options.fetchFn === undefined ? {} : { fetchFn: options.fetchFn }),
+        ...(options.createCodexClient === undefined
+          ? {}
+          : {
+              createCodexClient:
+                options.createCodexClient as CreateAgentRuntimeOptions["createCodexClient"],
+            }),
+      } as CreateAgentRuntimeOptions);
     this.onEvent = options.onEvent;
   }
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     let issue = cloneIssue(input.issue);
     let workspace: Workspace | null = null;
-    let client: AgentRunnerCodexClient | null = null;
-    let lastTurn: CodexTurnResult | null = null;
+    let session: AgentSession | null = null;
+    let lastTurn: AgentRunResult["lastTurn"] = null;
     let rateLimits: Record<string, unknown> | null = null;
     const liveSession = createEmptyLiveSession();
     const runAttempt: RunAttempt = {
@@ -169,7 +191,14 @@ export class AgentRunner {
       startedAt: new Date().toISOString(),
       status: "preparing_workspace",
     };
-    const abortController = createAgentAbortController(input.signal);
+    const abortController = createAgentAbortController(
+      input.signal,
+      async () => {
+        if (session !== null) {
+          await this.runtime.stopSession(session);
+        }
+      },
+    );
 
     try {
       abortController.throwIfAborted({
@@ -179,50 +208,32 @@ export class AgentRunner {
         liveSession,
       });
 
-      workspace = await this.workspaceManager.createForIssue(issue.id);
-      runAttempt.workspacePath = validateWorkspaceCwd({
-        cwd: workspace.path,
-        workspacePath: workspace.path,
-        workspaceRoot: this.config.workspace.root,
-      });
-      await cleanupWorkspaceArtifacts(workspace.path);
-      const workspacePath = workspace.path;
+      workspace = await this.workspaceProvider.createOrReuse(issue.identifier);
+      runAttempt.workspacePath =
+        workspace.provider === "local"
+          ? validateWorkspaceCwd({
+              cwd: workspace.cwd ?? workspace.path,
+              workspacePath: workspace.path,
+              workspaceRoot: this.config.workspace.root ?? "",
+            })
+          : workspace.path;
+      if (workspace.provider === "local") {
+        await cleanupWorkspaceArtifacts(workspace.path);
+      }
 
-      await this.hooks.run({
+      await this.workspaceProvider.runHook({
         name: "beforeRun",
-        workspacePath: workspace.path,
+        environment: workspace,
       });
 
       runAttempt.status = "launching_agent_process";
-      client = this.createCodexClient({
-        command: this.config.codex.command,
-        cwd: workspace.path,
-        approvalPolicy: this.config.codex.approvalPolicy,
-        threadSandbox: this.config.codex.threadSandbox,
-        turnSandboxPolicy: this.config.codex.turnSandboxPolicy,
-        readTimeoutMs: this.config.codex.readTimeoutMs,
-        turnTimeoutMs: this.config.codex.turnTimeoutMs,
-        stallTimeoutMs: this.config.codex.stallTimeoutMs,
-        dynamicTools: this.createDynamicTools(),
-        onEvent: (event) => {
-          applyCodexEventToSession(liveSession, event);
-          this.onEvent?.({
-            ...event,
-            issueId: issue.id,
-            issueIdentifier: issue.identifier,
-            attempt: input.attempt,
-            workspacePath,
-            turnCount: liveSession.turnCount,
-          });
-        },
+      session = await this.runtime.startSession({
+        environment: workspace,
+        issue,
       });
-      abortController.bindClient(client);
-
-      for (
-        let turnNumber = 1;
-        turnNumber <= this.config.agent.maxTurns;
-        turnNumber += 1
-      ) {
+      abortController.bindSession(session);
+      const maxTurns = getAgentRuntimeConfig(this.config).maxTurns;
+      for (let turnNumber = 1; turnNumber <= maxTurns; turnNumber += 1) {
         abortController.throwIfAborted({
           issue,
           workspace,
@@ -231,41 +242,81 @@ export class AgentRunner {
         });
         runAttempt.status = "building_prompt";
         const prompt = await buildTurnPrompt({
-          workflow: {
-            promptTemplate: this.config.promptTemplate,
-          },
+          workflow: { promptTemplate: this.config.promptTemplate },
           issue,
           attempt: input.attempt,
           turnNumber,
-          maxTurns: this.config.agent.maxTurns,
+          maxTurns,
         });
         const title = `${issue.identifier}: ${issue.title}`;
 
         runAttempt.status =
           turnNumber === 1 ? "initializing_session" : "streaming_turn";
-        lastTurn =
-          turnNumber === 1
-            ? await client.startSession({ prompt, title })
-            : await client.continueTurn(prompt, title);
-        rateLimits = lastTurn.rateLimits;
+        const activeSession = session;
+        if (activeSession === null) {
+          throw new Error("Agent session was not initialized.");
+        }
+        const turnResult = await this.runtime.sendTurn({
+          session: activeSession,
+          prompt,
+          issue,
+          environment: workspace,
+          title,
+          onEvent: (event) => {
+            applyAgentEventToSession(liveSession, event);
+            this.onEvent?.({
+              ...event,
+              issueId: issue.id,
+              issueIdentifier: issue.identifier,
+              attempt: input.attempt,
+              workspacePath: workspace?.path ?? "",
+              turnCount: liveSession.turnCount,
+            });
+          },
+        });
+        session = {
+          sessionId: turnResult.sessionId ?? session.sessionId,
+          threadId: turnResult.threadId ?? null,
+          turnId: turnResult.turnId ?? null,
+          processId: turnResult.processId ?? null,
+        };
+        rateLimits = turnResult.rateLimits;
+        lastTurn = {
+          outcome: turnResult.outcome,
+          message: turnResult.message,
+        };
 
-        applyCodexEventToSession(liveSession, {
-          event:
-            lastTurn.status === "completed"
-              ? "turn_completed"
-              : lastTurn.status === "failed"
-                ? "turn_failed"
-                : "turn_cancelled",
+        if (turnResult.outcome !== "completed") {
+          throw new Error(
+            turnResult.error ??
+              turnResult.message ??
+              `Agent turn ended with outcome '${turnResult.outcome}'.`,
+          );
+        }
+
+        const terminalEvent = {
+          event: outcomeToEvent(turnResult.outcome),
           timestamp: new Date().toISOString(),
-          codexAppServerPid: liveSession.codexAppServerPid,
-          sessionId: lastTurn.sessionId,
-          threadId: lastTurn.threadId,
-          turnId: lastTurn.turnId,
-          ...(lastTurn.usage === null ? {} : { usage: lastTurn.usage }),
-          ...(lastTurn.rateLimits === null
+          processId: turnResult.processId ?? liveSession.processId ?? null,
+          sessionId: turnResult.sessionId ?? liveSession.sessionId,
+          threadId: turnResult.threadId,
+          turnId: turnResult.turnId,
+          ...(turnResult.usage === null ? {} : { usage: turnResult.usage }),
+          ...(turnResult.rateLimits === null
             ? {}
-            : { rateLimits: lastTurn.rateLimits }),
-          ...(lastTurn.message === null ? {} : { message: lastTurn.message }),
+            : { rateLimits: turnResult.rateLimits }),
+          ...(turnResult.message === null
+            ? {}
+            : { message: turnResult.message }),
+        };
+        applyAgentEventToSession(liveSession, terminalEvent);
+        this.onEvent?.({
+          ...terminalEvent,
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          attempt: input.attempt,
+          workspacePath: workspace?.path ?? "",
+          turnCount: liveSession.turnCount,
         });
 
         runAttempt.status = "finishing";
@@ -300,32 +351,16 @@ export class AgentRunner {
       throw wrapped;
     } finally {
       abortController.dispose();
-
-      if (client !== null) {
-        await closeBestEffort(client);
+      if (session !== null) {
+        await closeBestEffort(this.runtime, session);
       }
-
       if (workspace !== null) {
-        await this.hooks.runBestEffort({
+        await this.workspaceProvider.runHookBestEffort({
           name: "afterRun",
-          workspacePath: workspace.path,
+          environment: workspace,
         });
       }
     }
-  }
-
-  private createDynamicTools(): CodexDynamicTool[] {
-    if (normalizeIssueState(this.config.tracker.kind ?? "") !== "linear") {
-      return [];
-    }
-
-    return [
-      createLinearGraphqlDynamicTool({
-        endpoint: this.config.tracker.endpoint,
-        apiKey: this.config.tracker.apiKey,
-        ...(this.fetchFn === undefined ? {} : { fetchFn: this.fetchFn }),
-      }),
-    ];
   }
 
   private async refreshIssueState(issue: Issue): Promise<Issue> {
@@ -403,46 +438,40 @@ export class AgentRunner {
 }
 
 async function cleanupWorkspaceArtifacts(workspacePath: string): Promise<void> {
-  await rm(`${workspacePath}/tmp`, {
-    force: true,
-    recursive: true,
-  });
+  await rm(`${workspacePath}/tmp`, { force: true, recursive: true });
 }
 
-function createDefaultCodexClient(
-  input: AgentRunnerCodexClientFactoryInput,
-): AgentRunnerCodexClient {
-  return new CodexAppServerClient({
-    command: input.command,
-    cwd: input.cwd,
-    approvalPolicy: input.approvalPolicy,
-    threadSandbox: input.threadSandbox,
-    turnSandboxPolicy: input.turnSandboxPolicy,
-    readTimeoutMs: input.readTimeoutMs,
-    turnTimeoutMs: input.turnTimeoutMs,
-    stallTimeoutMs: input.stallTimeoutMs,
-    dynamicTools: input.dynamicTools,
-    onEvent: input.onEvent,
-  });
+function outcomeToEvent(outcome: string): AgentRuntimeEvent["event"] {
+  switch (outcome) {
+    case "completed":
+      return "turn_completed";
+    case "cancelled":
+      return "turn_cancelled";
+    case "input_required":
+      return "turn_input_required";
+    default:
+      return "turn_failed";
+  }
 }
 
 function classifyFailureStatus(code: string | undefined): RunAttemptPhase {
   if (code === "codex_turn_timeout" || code === "hook_timed_out") {
     return "timed_out";
   }
-
   if (code === "codex_session_stalled") {
     return "stalled";
   }
-
   return "failed";
 }
 
-async function closeBestEffort(client: AgentRunnerCodexClient): Promise<void> {
+async function closeBestEffort(
+  runtime: AgentRuntime,
+  session: AgentSession,
+): Promise<void> {
   try {
-    await client.close();
+    await runtime.stopSession(session);
   } catch {
-    // Closing is cleanup-only here; preserve the primary failure cause.
+    // cleanup only
   }
 }
 
@@ -454,8 +483,11 @@ function cloneIssue(issue: Issue): Issue {
   };
 }
 
-function createAgentAbortController(signal: AbortSignal | undefined): {
-  bindClient(client: AgentRunnerCodexClient): void;
+function createAgentAbortController(
+  signal: AbortSignal | undefined,
+  stopSession: () => Promise<void>,
+): {
+  bindSession(session: AgentSession): void;
   dispose(): void;
   throwIfAborted(input: {
     issue: Issue;
@@ -464,29 +496,21 @@ function createAgentAbortController(signal: AbortSignal | undefined): {
     liveSession: LiveSession;
   }): void;
 } {
-  let client: AgentRunnerCodexClient | null = null;
+  let bound = false;
   let listener: (() => void) | null = null;
-
-  const closeClient = () => {
-    if (client === null) {
-      return;
-    }
-
-    void closeBestEffort(client);
-  };
 
   if (signal !== undefined) {
     listener = () => {
-      closeClient();
+      void stopSession();
     };
     signal.addEventListener("abort", listener, { once: true });
   }
 
   return {
-    bindClient(nextClient) {
-      client = nextClient;
+    bindSession() {
+      bound = true;
       if (signal?.aborted) {
-        closeClient();
+        void stopSession();
       }
     },
     dispose() {
@@ -494,7 +518,7 @@ function createAgentAbortController(signal: AbortSignal | undefined): {
         signal.removeEventListener("abort", listener);
       }
       listener = null;
-      client = null;
+      bound = false;
     },
     throwIfAborted(input) {
       if (!signal?.aborted) {
@@ -519,17 +543,21 @@ function toAbortMessage(reason: unknown): string {
     return reason.trim();
   }
 
-  if (
-    typeof reason === "object" &&
-    reason !== null &&
-    "message" in reason &&
-    typeof reason.message === "string" &&
-    reason.message.trim().length > 0
-  ) {
-    return reason.message.trim();
-  }
-
-  return "Agent run cancelled.";
+  return "Agent run aborted.";
 }
 
-export type { BuildTurnPromptInput };
+function getAgentRuntimeConfig(config: ResolvedWorkflowConfig) {
+  return (
+    config.agentRuntime ?? {
+      provider: "stdio" as const,
+      command: config.codex.command,
+      approvalPolicy: config.codex.approvalPolicy,
+      threadSandbox: config.codex.threadSandbox,
+      turnSandboxPolicy: config.codex.turnSandboxPolicy,
+      turnTimeoutMs: config.codex.turnTimeoutMs,
+      readTimeoutMs: config.codex.readTimeoutMs,
+      stallTimeoutMs: config.codex.stallTimeoutMs,
+      maxTurns: config.agent.maxTurns,
+    }
+  );
+}

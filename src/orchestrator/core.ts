@@ -1,4 +1,4 @@
-import type { CodexClientEvent } from "../codex/app-server-client.js";
+import type { AgentRuntimeEvent } from "../agent-runtime/types.js";
 import { validateDispatchConfig } from "../config/config-resolver.js";
 import type {
   DispatchValidationResult,
@@ -15,7 +15,7 @@ import {
 } from "../domain/model.js";
 import {
   addEndedSessionRuntime,
-  applyCodexEventToOrchestratorState,
+  applyAgentEventToOrchestratorState,
 } from "../logging/session-metrics.js";
 import type { IssueStateSnapshot, IssueTracker } from "../tracker/tracker.js";
 
@@ -52,7 +52,7 @@ export interface RetryTimerResult {
   retryEntry: RetryEntry | null;
 }
 
-export interface CodexEventResult {
+export interface AgentEventResult {
   applied: boolean;
 }
 
@@ -337,17 +337,24 @@ export class OrchestratorCore {
     );
   }
 
-  onCodexEvent(input: {
+  onAgentEvent(input: {
     issueId: string;
-    event: CodexClientEvent;
-  }): CodexEventResult {
+    event: AgentRuntimeEvent;
+  }): AgentEventResult {
     const runningEntry = this.state.running[input.issueId];
     if (runningEntry === undefined) {
       return { applied: false };
     }
 
-    applyCodexEventToOrchestratorState(this.state, runningEntry, input.event);
+    applyAgentEventToOrchestratorState(this.state, runningEntry, input.event);
     return { applied: true };
+  }
+
+  onCodexEvent(input: {
+    issueId: string;
+    event: AgentRuntimeEvent;
+  }): AgentEventResult {
+    return this.onAgentEvent(input);
   }
 
   private syncStateFromConfig(): void {
@@ -421,6 +428,10 @@ export class OrchestratorCore {
         startedAt: this.now().toISOString(),
         workerHandle: spawned.workerHandle,
         monitorHandle: spawned.monitorHandle,
+        runtimeProvider: this.config.agentRuntime?.provider ?? "stdio",
+        ...(this.config.workspace.provider === undefined
+          ? {}
+          : { workspaceProvider: this.config.workspace.provider }),
       };
       this.state.claimed.add(issue.id);
       this.clearRetryEntry(issue.id);
@@ -515,7 +526,10 @@ export class OrchestratorCore {
   }
 
   private async reconcileStalledRuns(): Promise<StopRequest[]> {
-    if (this.config.codex.stallTimeoutMs <= 0) {
+    if (
+      (this.config.agentRuntime?.stallTimeoutMs ??
+        this.config.codex.stallTimeoutMs) <= 0
+    ) {
       return [];
     }
 
@@ -523,14 +537,20 @@ export class OrchestratorCore {
     const stopRequests: StopRequest[] = [];
     for (const runningEntry of Object.values(this.state.running)) {
       const baselineTimestamp = parseEventTimestamp(
-        runningEntry.lastCodexTimestamp,
+        runningEntry.lastAgentTimestamp ??
+          runningEntry.lastCodexTimestamp ??
+          null,
         runningEntry.startedAt,
       );
       if (baselineTimestamp === null) {
         continue;
       }
 
-      if (nowMs - baselineTimestamp > this.config.codex.stallTimeoutMs) {
+      if (
+        nowMs - baselineTimestamp >
+        (this.config.agentRuntime?.stallTimeoutMs ??
+          this.config.codex.stallTimeoutMs)
+      ) {
         stopRequests.push(
           await this.requestStop(runningEntry, false, "stall_timeout"),
         );
@@ -670,11 +690,11 @@ function toSortableDate(timestamp: string | null): number {
 }
 
 function parseEventTimestamp(
-  lastCodexTimestamp: string | null,
+  lastAgentTimestamp: string | null,
   startedAt: string,
 ): number | null {
-  if (lastCodexTimestamp !== null) {
-    const parsed = Date.parse(lastCodexTimestamp);
+  if (lastAgentTimestamp !== null) {
+    const parsed = Date.parse(lastAgentTimestamp);
     if (Number.isFinite(parsed)) {
       return parsed;
     }

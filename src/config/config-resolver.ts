@@ -6,8 +6,13 @@ import { normalizeIssueState } from "../domain/model.js";
 import { ERROR_CODES } from "../errors/codes.js";
 import {
   DEFAULT_ACTIVE_STATES,
+  DEFAULT_AGENT_RUNTIME_AUTO_COMMIT,
+  DEFAULT_AGENT_RUNTIME_AUTO_PR,
+  DEFAULT_AGENT_RUNTIME_PROVIDER,
   DEFAULT_CODEX_COMMAND,
   DEFAULT_HOOK_TIMEOUT_MS,
+  DEFAULT_JIRA_ACTIVE_STATES,
+  DEFAULT_JIRA_TERMINAL_STATES,
   DEFAULT_LINEAR_ENDPOINT,
   DEFAULT_LINEAR_NETWORK_TIMEOUT_MS,
   DEFAULT_LINEAR_PAGE_SIZE,
@@ -20,10 +25,12 @@ import {
   DEFAULT_OBSERVABILITY_RENDER_INTERVAL_MS,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_READ_TIMEOUT_MS,
+  DEFAULT_SANDBOX_IDLE_TIMEOUT_MS,
   DEFAULT_STALL_TIMEOUT_MS,
   DEFAULT_TERMINAL_STATES,
   DEFAULT_TRACKER_KIND,
   DEFAULT_TURN_TIMEOUT_MS,
+  DEFAULT_WORKSPACE_PROVIDER,
   DEFAULT_WORKSPACE_ROOT,
 } from "./defaults.js";
 import type {
@@ -32,6 +39,12 @@ import type {
 } from "./types.js";
 
 const LINEAR_CANONICAL_API_KEY_ENV = "LINEAR_API_KEY";
+const JIRA_CANONICAL_API_KEY_ENV = "JIRA_API_TOKEN";
+const JIRA_CANONICAL_USER_ENV = "JIRA_USER_EMAIL";
+const AGENT_RUNTIME_URL_ENV = "AGENT_RUNTIME_URL";
+const AGENT_RUNTIME_TOKEN_ENV = "AGENT_RUNTIME_TOKEN";
+const SANDBOX_API_URL_ENV = "SANDBOX_API_URL";
+const SANDBOX_API_TOKEN_ENV = "SANDBOX_API_TOKEN";
 
 export function resolveWorkflowConfig(
   workflow: WorkflowDefinition & { workflowPath: string },
@@ -44,39 +57,160 @@ export function resolveWorkflowConfig(
   const hooks = asRecord(config.hooks);
   const agent = asRecord(config.agent);
   const codex = asRecord(config.codex);
+  const agentRuntime = asRecord(config.agent_runtime);
   const server = asRecord(config.server);
   const observability = asRecord(config.observability);
+
+  const trackerKind =
+    typeof tracker.kind === "string" && tracker.kind.trim() !== ""
+      ? tracker.kind.trim().toLowerCase()
+      : DEFAULT_TRACKER_KIND;
+  const workspaceProvider =
+    typeof workspace.provider === "string" && workspace.provider.trim() !== ""
+      ? workspace.provider.trim().toLowerCase()
+      : DEFAULT_WORKSPACE_PROVIDER;
+  const runtimeProvider =
+    typeof agentRuntime.provider === "string" &&
+    agentRuntime.provider.trim() !== ""
+      ? agentRuntime.provider.trim().toLowerCase()
+      : DEFAULT_AGENT_RUNTIME_PROVIDER;
+
+  const trackerApiKey =
+    resolveEnvReference(
+      readString(tracker.api_token) ?? readString(tracker.api_key),
+      environment,
+    ) ??
+    (trackerKind === "jira"
+      ? (environment[JIRA_CANONICAL_API_KEY_ENV] ?? null)
+      : (environment[LINEAR_CANONICAL_API_KEY_ENV] ?? null));
+  const trackerUserEmail =
+    resolveEnvReference(readString(tracker.user_email), environment) ??
+    (trackerKind === "jira"
+      ? (environment[JIRA_CANONICAL_USER_ENV] ?? null)
+      : null);
+
+  const resolvedAgentMaxTurns =
+    readPositiveInteger(agent.max_turns) ?? DEFAULT_MAX_TURNS;
+
+  const resolvedCodex = {
+    command: readString(codex.command) ?? DEFAULT_CODEX_COMMAND,
+    approvalPolicy: codex.approval_policy,
+    threadSandbox: codex.thread_sandbox,
+    turnSandboxPolicy: codex.turn_sandbox_policy,
+    turnTimeoutMs:
+      readPositiveInteger(codex.turn_timeout_ms) ?? DEFAULT_TURN_TIMEOUT_MS,
+    readTimeoutMs:
+      readPositiveInteger(codex.read_timeout_ms) ?? DEFAULT_READ_TIMEOUT_MS,
+    stallTimeoutMs:
+      readInteger(codex.stall_timeout_ms) ?? DEFAULT_STALL_TIMEOUT_MS,
+  };
+
+  const resolvedAgentRuntimeProvider =
+    Object.keys(agentRuntime).length === 0
+      ? DEFAULT_AGENT_RUNTIME_PROVIDER
+      : runtimeProvider;
+
+  const resolvedAgentRuntime = {
+    provider: resolvedAgentRuntimeProvider,
+    command:
+      readString(agentRuntime.command) ??
+      resolvedCodex.command ??
+      DEFAULT_CODEX_COMMAND,
+    approvalPolicy:
+      agentRuntime.approval_policy !== undefined
+        ? agentRuntime.approval_policy
+        : resolvedCodex.approvalPolicy,
+    threadSandbox:
+      agentRuntime.thread_sandbox !== undefined
+        ? agentRuntime.thread_sandbox
+        : resolvedCodex.threadSandbox,
+    turnSandboxPolicy:
+      agentRuntime.turn_sandbox_policy !== undefined
+        ? agentRuntime.turn_sandbox_policy
+        : resolvedCodex.turnSandboxPolicy,
+    baseUrl:
+      resolveEnvReference(readString(agentRuntime.base_url), environment) ??
+      environment[AGENT_RUNTIME_URL_ENV] ??
+      null,
+    apiToken:
+      resolveEnvReference(readString(agentRuntime.api_token), environment) ??
+      environment[AGENT_RUNTIME_TOKEN_ENV] ??
+      null,
+    githubInstallationId: readString(agentRuntime.github_installation_id),
+    autoCommit:
+      readBoolean(agentRuntime.auto_commit) ??
+      DEFAULT_AGENT_RUNTIME_AUTO_COMMIT,
+    autoPr: readBoolean(agentRuntime.auto_pr) ?? DEFAULT_AGENT_RUNTIME_AUTO_PR,
+    turnTimeoutMs:
+      readPositiveInteger(agentRuntime.turn_timeout_ms) ??
+      resolvedCodex.turnTimeoutMs,
+    readTimeoutMs:
+      readPositiveInteger(agentRuntime.read_timeout_ms) ??
+      resolvedCodex.readTimeoutMs,
+    stallTimeoutMs:
+      readInteger(agentRuntime.stall_timeout_ms) ??
+      resolvedCodex.stallTimeoutMs,
+    maxTurns:
+      readPositiveInteger(agentRuntime.max_turns) ?? resolvedAgentMaxTurns,
+  } as const;
 
   return {
     workflowPath: workflow.workflowPath,
     promptTemplate: workflow.promptTemplate,
     tracker: {
-      kind: readString(tracker.kind) ?? DEFAULT_TRACKER_KIND,
+      kind: trackerKind,
       endpoint: readString(tracker.endpoint) ?? DEFAULT_LINEAR_ENDPOINT,
-      apiKey:
-        resolveEnvReference(readString(tracker.api_key), environment) ??
-        environment[LINEAR_CANONICAL_API_KEY_ENV] ??
-        null,
+      apiKey: trackerApiKey,
       projectSlug: readString(tracker.project_slug),
+      baseUrl: normalizeBaseUrl(
+        resolveEnvReference(readString(tracker.base_url), environment),
+      ),
+      userEmail: trackerUserEmail,
+      projectKey: readString(tracker.project_key),
+      jqlFilter: readString(tracker.jql_filter),
       activeStates: readStringList(
         tracker.active_states,
-        DEFAULT_ACTIVE_STATES,
+        trackerKind === "jira"
+          ? DEFAULT_JIRA_ACTIVE_STATES
+          : DEFAULT_ACTIVE_STATES,
       ),
       terminalStates: readStringList(
         tracker.terminal_states,
-        DEFAULT_TERMINAL_STATES,
+        trackerKind === "jira"
+          ? DEFAULT_JIRA_TERMINAL_STATES
+          : DEFAULT_TERMINAL_STATES,
       ),
     },
     polling: {
       intervalMs: readInteger(polling.interval_ms) ?? DEFAULT_POLL_INTERVAL_MS,
     },
     workspace: {
+      provider: workspaceProvider,
       root:
         resolvePathValue(
           readString(workspace.root),
           workflow.workflowPath,
           environment,
         ) ?? DEFAULT_WORKSPACE_ROOT,
+      sandboxApiUrl: normalizeBaseUrl(
+        resolveEnvReference(
+          readString(workspace.sandbox_api_url),
+          environment,
+        ) ??
+          environment[SANDBOX_API_URL_ENV] ??
+          null,
+      ),
+      sandboxApiToken:
+        resolveEnvReference(
+          readString(workspace.sandbox_api_token),
+          environment,
+        ) ??
+        environment[SANDBOX_API_TOKEN_ENV] ??
+        null,
+      sandboxBaseSnapshotId: readString(workspace.sandbox_base_snapshot_id),
+      sandboxIdleTimeoutMs:
+        readPositiveInteger(workspace.sandbox_idle_timeout_ms) ??
+        DEFAULT_SANDBOX_IDLE_TIMEOUT_MS,
     },
     hooks: {
       afterCreate: readScript(hooks.after_create),
@@ -90,7 +224,7 @@ export function resolveWorkflowConfig(
       maxConcurrentAgents:
         readPositiveInteger(agent.max_concurrent_agents) ??
         DEFAULT_MAX_CONCURRENT_AGENTS,
-      maxTurns: readPositiveInteger(agent.max_turns) ?? DEFAULT_MAX_TURNS,
+      maxTurns: resolvedAgentMaxTurns,
       maxRetryBackoffMs:
         readPositiveInteger(agent.max_retry_backoff_ms) ??
         DEFAULT_MAX_RETRY_BACKOFF_MS,
@@ -98,18 +232,8 @@ export function resolveWorkflowConfig(
         agent.max_concurrent_agents_by_state,
       ),
     },
-    codex: {
-      command: readString(codex.command) ?? DEFAULT_CODEX_COMMAND,
-      approvalPolicy: codex.approval_policy,
-      threadSandbox: codex.thread_sandbox,
-      turnSandboxPolicy: codex.turn_sandbox_policy,
-      turnTimeoutMs:
-        readPositiveInteger(codex.turn_timeout_ms) ?? DEFAULT_TURN_TIMEOUT_MS,
-      readTimeoutMs:
-        readPositiveInteger(codex.read_timeout_ms) ?? DEFAULT_READ_TIMEOUT_MS,
-      stallTimeoutMs:
-        readInteger(codex.stall_timeout_ms) ?? DEFAULT_STALL_TIMEOUT_MS,
-    },
+    codex: resolvedCodex,
+    agentRuntime: resolvedAgentRuntime,
     server: {
       port: readNonNegativeInteger(server.port),
     },
@@ -138,7 +262,7 @@ export function validateDispatchConfig(
     );
   }
 
-  if (trackerKind !== DEFAULT_TRACKER_KIND) {
+  if (trackerKind !== "linear" && trackerKind !== "jira") {
     return invalid(
       ERROR_CODES.unsupportedTrackerKind,
       `tracker.kind '${trackerKind}' is not supported.`,
@@ -148,22 +272,116 @@ export function validateDispatchConfig(
   if (!config.tracker.apiKey || config.tracker.apiKey.trim() === "") {
     return invalid(
       ERROR_CODES.trackerCredentialsMissing,
-      "tracker.api_key must be configured before dispatch.",
+      trackerKind === "jira"
+        ? "tracker.api_token must be configured before dispatch."
+        : "tracker.api_key must be configured before dispatch.",
     );
   }
 
-  if (!config.tracker.projectSlug || config.tracker.projectSlug.trim() === "") {
+  if (trackerKind === "linear") {
+    if (
+      !config.tracker.projectSlug ||
+      config.tracker.projectSlug.trim() === ""
+    ) {
+      return invalid(
+        ERROR_CODES.configInvalid,
+        "tracker.project_slug must be configured before dispatch.",
+      );
+    }
+  }
+
+  if (trackerKind === "jira") {
+    if (!config.tracker.baseUrl || !isValidUrl(config.tracker.baseUrl)) {
+      return invalid(
+        ERROR_CODES.configInvalid,
+        "tracker.base_url must be configured as a valid URL before dispatch.",
+      );
+    }
+    if (!config.tracker.userEmail || config.tracker.userEmail.trim() === "") {
+      return invalid(
+        ERROR_CODES.trackerCredentialsMissing,
+        "tracker.user_email must be configured before dispatch.",
+      );
+    }
+    if (!config.tracker.projectKey || config.tracker.projectKey.trim() === "") {
+      return invalid(
+        ERROR_CODES.configInvalid,
+        "tracker.project_key must be configured before dispatch.",
+      );
+    }
+  }
+
+  const agentRuntime = config.agentRuntime ?? {
+    provider: "stdio" as const,
+    command: config.codex.command,
+    approvalPolicy: config.codex.approvalPolicy,
+    threadSandbox: config.codex.threadSandbox,
+    turnSandboxPolicy: config.codex.turnSandboxPolicy,
+    turnTimeoutMs: config.codex.turnTimeoutMs,
+    readTimeoutMs: config.codex.readTimeoutMs,
+    stallTimeoutMs: config.codex.stallTimeoutMs,
+    maxTurns: config.agent.maxTurns,
+  };
+
+  if (agentRuntime.provider !== "stdio" && agentRuntime.provider !== "http") {
     return invalid(
       ERROR_CODES.configInvalid,
-      "tracker.project_slug must be configured before dispatch.",
+      `agent_runtime.provider '${agentRuntime.provider}' is not supported.`,
     );
   }
 
-  if (config.codex.command.trim() === "") {
+  const workspaceProvider =
+    config.workspace.provider ?? DEFAULT_WORKSPACE_PROVIDER;
+  if (workspaceProvider !== "local" && workspaceProvider !== "sandbox") {
     return invalid(
       ERROR_CODES.configInvalid,
-      "codex.command must be present and non-empty before dispatch.",
+      `workspace.provider '${workspaceProvider}' is not supported.`,
     );
+  }
+
+  if (agentRuntime.provider === "stdio") {
+    if (agentRuntime.command.trim() === "") {
+      return invalid(
+        ERROR_CODES.configInvalid,
+        "agent_runtime.command must be present and non-empty before dispatch.",
+      );
+    }
+    if (workspaceProvider === "sandbox") {
+      return invalid(
+        ERROR_CODES.configInvalid,
+        "workspace.provider 'sandbox' is only supported with agent_runtime.provider 'http'.",
+      );
+    }
+  }
+
+  if (agentRuntime.provider === "http") {
+    if (!agentRuntime.baseUrl || !isValidUrl(agentRuntime.baseUrl)) {
+      return invalid(
+        ERROR_CODES.configInvalid,
+        "agent_runtime.base_url must be configured as a valid URL before dispatch.",
+      );
+    }
+  }
+
+  if (workspaceProvider === "sandbox") {
+    if (
+      !config.workspace.sandboxApiUrl ||
+      !isValidUrl(config.workspace.sandboxApiUrl)
+    ) {
+      return invalid(
+        ERROR_CODES.configInvalid,
+        "workspace.sandbox_api_url must be configured as a valid URL before dispatch.",
+      );
+    }
+    if (
+      !config.workspace.sandboxApiToken ||
+      config.workspace.sandboxApiToken.trim() === ""
+    ) {
+      return invalid(
+        ERROR_CODES.trackerCredentialsMissing,
+        "workspace.sandbox_api_token must be configured before dispatch.",
+      );
+    }
   }
 
   return { ok: true };
@@ -193,6 +411,23 @@ function readString(value: unknown): string | null {
   }
 
   return value;
+}
+
+function readTrackerKind(value: unknown): string {
+  const kind = readString(value)?.trim().toLowerCase();
+  return kind && kind !== "" ? kind : DEFAULT_TRACKER_KIND;
+}
+
+function readWorkspaceProvider(value: unknown): string {
+  const provider = readString(value)?.trim().toLowerCase();
+  return provider && provider !== "" ? provider : DEFAULT_WORKSPACE_PROVIDER;
+}
+
+function readRuntimeProvider(value: unknown): string {
+  const provider = readString(value)?.trim().toLowerCase();
+  return provider && provider !== ""
+    ? provider
+    : DEFAULT_AGENT_RUNTIME_PROVIDER;
 }
 
 function readScript(value: unknown): string | null {
@@ -315,6 +550,13 @@ function resolveEnvReference(
   return resolvedValue;
 }
 
+function normalizeBaseUrl(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  return value.replace(/\/$/, "");
+}
+
 function resolvePathValue(
   value: string | null,
   workflowPath: string,
@@ -343,6 +585,15 @@ function resolvePathValue(
 
   expanded = resolve(resolve(workflowPath, ".."), expanded);
   return normalize(expanded);
+}
+
+function isValidUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 export const LINEAR_DEFAULTS = Object.freeze({

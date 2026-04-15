@@ -80,7 +80,7 @@ describe("OrchestratorRuntimeHost", () => {
     fakeRunner.resolve("1", {
       issue: createIssue({ state: "In Progress" }),
       workspace: {
-        path: "/tmp/workspaces/1",
+        path: "/tmp/workspaces/RENAMED-2",
         workspaceKey: "1",
         createdNow: true,
       },
@@ -224,7 +224,7 @@ describe("OrchestratorRuntimeHost", () => {
     expect(details).toMatchObject({
       issue_identifier: "RENAMED-2",
       workspace: {
-        path: "/tmp/workspaces/1",
+        path: "/tmp/workspaces/RENAMED-2",
       },
     });
   });
