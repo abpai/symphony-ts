@@ -17,8 +17,8 @@ boundary, and gives operators a clean surface for runtime visibility, retries, a
 
 - Node.js `>= 22`
 - a repository with a valid `WORKFLOW.md`
-- tracker credentials such as `LINEAR_API_KEY`
-- a coding agent runtime that supports app-server mode, such as `codex app-server`
+- tracker credentials such as `LINEAR_API_KEY` or `JIRA_API_TOKEN` + `JIRA_USER_EMAIL`
+- a coding agent runtime such as `codex app-server` (stdio) or an HTTP agent service
 
 ### Install
 
@@ -36,12 +36,12 @@ symphony --help
 
 1. Go to the repository you want Symphony to operate on.
 2. Create `WORKFLOW.md` in that repository.
-3. Export `LINEAR_API_KEY`.
+3. Export the tracker credentials required by your workflow.
 4. Start Symphony from that repository root.
 
 ```bash
 cd /path/to/your-repo
-export LINEAR_API_KEY=your-linear-token
+export LINEAR_API_KEY=your-linear-token   # or JIRA_API_TOKEN / JIRA_USER_EMAIL
 symphony ./WORKFLOW.md --acknowledge-high-trust-preview --port 4321
 ```
 
@@ -67,8 +67,8 @@ by default, reads `./WORKFLOW.md` from the current working directory.
 Set up and start Symphony in this repository.
 
 Requirements:
-- create or update WORKFLOW.md for Linear
-- use LINEAR_API_KEY from the environment or tell me exactly which variable is missing
+- create or update WORKFLOW.md for Linear or Jira
+- use the required tracker credentials from the environment or tell me exactly which variable is missing
 - install symphony-ts and start Symphony with the required --acknowledge-high-trust-preview flag
 - if startup fails, stop and report the exact failing step and command
 ```
@@ -83,40 +83,47 @@ tracker:
   kind: linear
   api_key: $LINEAR_API_KEY
   project_slug: your-linear-project-slug
+
 workspace:
+  provider: local
   root: ~/code/symphony-workspaces
-codex:
+
+agent_runtime:
+  provider: stdio
   command: codex app-server
+
 server:
   port: 4321
 ---
 
-You are working on Linear issue {{ issue.identifier }}.
+You are working on issue {{ issue.identifier }}.
 Implement the task, validate the result, and stop at the required handoff state.
 ```
 
 This is the only example `WORKFLOW.md` you need to get started. Copy it into your repository root
 as `WORKFLOW.md`, then change these fields before starting Symphony:
 
-- `tracker.project_slug`
-- `workspace.root`
-- `codex.command`
+- `tracker.project_slug` or Jira-specific tracker fields
+- `workspace.provider` and `workspace.root` / sandbox fields
+- `agent_runtime.provider` and its provider-specific settings
 
 If you want the dashboard, keep `server.port` in the workflow or pass `--port` on the CLI.
 The web dashboard now opens with a server-rendered snapshot and continues updating live in the
 browser over server-sent events.
 
-If your agent workflow needs access to environment variables from the launching shell, configure
-Codex to inherit them in `codex.command`, for example:
+If your stdio agent runtime needs access to environment variables from the launching shell, configure
+Codex to inherit them in `agent_runtime.command` (or legacy `codex.command`), for example:
 
 ```yaml
-codex:
+agent_runtime:
+  provider: stdio
   command: codex --config shell_environment_policy.inherit=all app-server
 ```
 
 If your agent must push branches, open PRs, or call external APIs during a turn, also configure a
 turn sandbox policy that explicitly allows network access instead of relying on a minimal
-`workspaceWrite` sandbox object.
+`workspaceWrite` sandbox object. Configure this on `agent_runtime.turn_sandbox_policy`
+(or legacy `codex.turn_sandbox_policy`).
 
 If a specific external CLI still does not see the credentials it needs in your environment, provide
 that tool's credential via environment variables before launching Symphony.
@@ -192,9 +199,10 @@ Symphony is a long-running service that:
 - handles retries, reconciliation, and cleanup
 - exposes structured logs and an operator-facing status surface
 
-In a typical setup, Symphony watches a Linear board, dispatches agent runs for ready tickets, and
-lets the agents produce proof of work such as CI status, review feedback, and pull requests. Human
-operators stay focused on the work itself instead of supervising every agent turn.
+In a typical setup, Symphony watches a Linear board or Jira project, dispatches agent runs for
+ready tickets, and lets the agents produce proof of work such as CI status, review feedback, and
+pull requests. The runtime can be local stdio or HTTP-backed, and workspaces can stay local or be
+tracked through a sandbox provider.
 
 ## Why Teams Use It
 

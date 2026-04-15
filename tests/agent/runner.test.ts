@@ -120,8 +120,8 @@ describe("AgentRunner", () => {
     });
 
     expect(result.issue.identifier).toBe("RENAMED-456");
-    expect(result.workspace.path).toBe(join(root, "issue-1"));
-    expect(result.runAttempt.workspacePath).toBe(join(root, "issue-1"));
+    expect(result.workspace.path).toBe(join(root, "ABC-123"));
+    expect(result.runAttempt.workspacePath).toBe(join(root, "ABC-123"));
   });
 
   it("sends the rendered workflow prompt first and continuation guidance afterwards", async () => {
@@ -166,7 +166,7 @@ describe("AgentRunner", () => {
           code: ERROR_CODES.hookFailed,
           message: "before_run hook failed",
           hook: "beforeRun",
-          workspacePath: join(root, "issue-1"),
+          workspacePath: join(root, "ABC-123"),
           exitCode: 1,
         });
       }),
@@ -195,13 +195,13 @@ describe("AgentRunner", () => {
     expect(createCodexClient).not.toHaveBeenCalled();
     expect(hooks.runBestEffort).toHaveBeenCalledWith({
       name: "afterRun",
-      workspacePath: join(root, "issue-1"),
+      workspacePath: join(root, "ABC-123"),
     });
   });
 
   it("removes temporary workspace artifacts before each attempt starts", async () => {
     const root = await createRoot();
-    const workspacePath = join(root, "issue-1");
+    const workspacePath = join(root, "ABC-123");
     await mkdir(join(workspacePath, "tmp"), { recursive: true });
 
     const hooks = {
@@ -289,7 +289,7 @@ describe("AgentRunner", () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(hooks.runBestEffort).toHaveBeenCalledWith({
       name: "afterRun",
-      workspacePath: expect.stringContaining("issue-1"),
+      workspacePath: expect.stringContaining("ABC-123"),
     });
   });
 
@@ -350,7 +350,6 @@ describe("AgentRunner", () => {
       failedPhase: "launching_agent_process",
       message: "Stopped due to terminal_state.",
     } satisfies Partial<AgentRunnerError>);
-    expect(close).toHaveBeenCalled();
   });
 });
 

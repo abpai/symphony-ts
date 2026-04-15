@@ -1,4 +1,4 @@
-import type { CodexClientEvent } from "../codex/app-server-client.js";
+import type { AgentRuntimeEvent } from "../agent-runtime/types.js";
 import type {
   LiveSession,
   OrchestratorState,
@@ -6,7 +6,7 @@ import type {
 } from "../domain/model.js";
 
 const SESSION_EVENT_MESSAGES: Partial<
-  Record<CodexClientEvent["event"], string>
+  Record<AgentRuntimeEvent["event"], string>
 > = Object.freeze({
   session_started: "session started",
   startup_failed: "startup failed",
@@ -29,9 +29,9 @@ export interface SessionTelemetryUpdateResult {
   rateLimitsUpdated: boolean;
 }
 
-export function applyCodexEventToSession(
+export function applyAgentEventToSession(
   session: LiveSession,
-  event: CodexClientEvent,
+  event: AgentRuntimeEvent,
 ): SessionTelemetryUpdateResult {
   if (event.sessionId !== undefined) {
     session.sessionId = event.sessionId;
@@ -42,10 +42,15 @@ export function applyCodexEventToSession(
   if (event.turnId !== undefined) {
     session.turnId = event.turnId;
   }
-  session.codexAppServerPid = event.codexAppServerPid;
+  session.processId = event.processId ?? event.codexAppServerPid ?? null;
+  session.agentProcessId = session.processId;
+  session.codexAppServerPid = session.processId;
+  session.lastAgentEvent = event.event;
   session.lastCodexEvent = event.event;
+  session.lastAgentTimestamp = event.timestamp;
   session.lastCodexTimestamp = event.timestamp;
-  session.lastCodexMessage = summarizeCodexEvent(event);
+  session.lastAgentMessage = summarizeAgentEvent(event);
+  session.lastCodexMessage = session.lastAgentMessage;
 
   if (event.event === "session_started") {
     session.turnCount += 1;
@@ -77,6 +82,9 @@ export function applyCodexEventToSession(
     totalTokens,
   );
 
+  session.agentInputTokens = inputTokens;
+  session.agentOutputTokens = outputTokens;
+  session.agentTotalTokens = totalTokens;
   session.codexInputTokens = inputTokens;
   session.codexOutputTokens = outputTokens;
   session.codexTotalTokens = totalTokens;
@@ -92,18 +100,23 @@ export function applyCodexEventToSession(
   };
 }
 
-export function applyCodexEventToOrchestratorState(
+export function applyAgentEventToOrchestratorState(
   state: OrchestratorState,
   runningEntry: RunningEntry,
-  event: CodexClientEvent,
+  event: AgentRuntimeEvent,
 ): SessionTelemetryUpdateResult {
-  const result = applyCodexEventToSession(runningEntry, event);
+  const result = applyAgentEventToSession(runningEntry, event);
 
-  state.codexTotals.inputTokens += result.inputTokensDelta;
-  state.codexTotals.outputTokens += result.outputTokensDelta;
-  state.codexTotals.totalTokens += result.totalTokensDelta;
+  state.agentTotals.inputTokens += result.inputTokensDelta;
+  state.agentTotals.outputTokens += result.outputTokensDelta;
+  state.agentTotals.totalTokens += result.totalTokensDelta;
+  state.codexTotals.inputTokens = state.agentTotals.inputTokens;
+  state.codexTotals.outputTokens = state.agentTotals.outputTokens;
+  state.codexTotals.totalTokens = state.agentTotals.totalTokens;
+  state.codexTotals.secondsRunning = state.agentTotals.secondsRunning;
 
   if (event.rateLimits !== undefined) {
+    state.agentRateLimits = event.rateLimits;
     state.codexRateLimits = event.rateLimits;
   }
 
@@ -118,14 +131,15 @@ export function addEndedSessionRuntime(
   const startedAtMs = Date.parse(startedAt);
   const endedAtMs = endedAt.getTime();
   if (!Number.isFinite(startedAtMs) || endedAtMs < startedAtMs) {
-    return state.codexTotals.secondsRunning;
+    return state.agentTotals.secondsRunning;
   }
 
   const seconds = roundSeconds((endedAtMs - startedAtMs) / 1000);
-  state.codexTotals.secondsRunning = roundSeconds(
-    state.codexTotals.secondsRunning + seconds,
+  state.agentTotals.secondsRunning = roundSeconds(
+    state.agentTotals.secondsRunning + seconds,
   );
-  return state.codexTotals.secondsRunning;
+  state.codexTotals.secondsRunning = state.agentTotals.secondsRunning;
+  return state.agentTotals.secondsRunning;
 }
 
 export function getAggregateSecondsRunning(
@@ -133,7 +147,7 @@ export function getAggregateSecondsRunning(
   now = new Date(),
 ): number {
   const nowMs = now.getTime();
-  let total = state.codexTotals.secondsRunning;
+  let total = state.agentTotals.secondsRunning;
 
   for (const runningEntry of Object.values(state.running)) {
     const startedAtMs = Date.parse(runningEntry.startedAt);
@@ -147,7 +161,7 @@ export function getAggregateSecondsRunning(
   return roundSeconds(total);
 }
 
-export function summarizeCodexEvent(event: CodexClientEvent): string {
+export function summarizeAgentEvent(event: AgentRuntimeEvent): string {
   if (event.message !== undefined && event.message.trim().length > 0) {
     return event.message.trim();
   }
@@ -164,6 +178,11 @@ export function summarizeCodexEvent(event: CodexClientEvent): string {
   const fallback = SESSION_EVENT_MESSAGES[event.event];
   return fallback ?? event.event;
 }
+
+export const applyCodexEventToSession = applyAgentEventToSession;
+export const applyCodexEventToOrchestratorState =
+  applyAgentEventToOrchestratorState;
+export const summarizeCodexEvent = summarizeAgentEvent;
 
 function computeCounterDelta(previous: number, next: number): number {
   if (!Number.isFinite(previous)) {

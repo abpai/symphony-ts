@@ -241,7 +241,7 @@ describe("config-resolver", () => {
     });
   });
 
-  it("rejects unsupported tracker kinds during dispatch validation", () => {
+  it("validates jira-specific required fields during dispatch validation", () => {
     const validation = validateDispatchConfig(
       resolveWorkflowConfig(
         {
@@ -262,8 +262,67 @@ describe("config-resolver", () => {
     expect(validation).toEqual({
       ok: false,
       error: {
-        code: ERROR_CODES.unsupportedTrackerKind,
-        message: "tracker.kind 'jira' is not supported.",
+        code: ERROR_CODES.configInvalid,
+        message:
+          "tracker.base_url must be configured as a valid URL before dispatch.",
+      },
+    });
+  });
+
+  it("rejects unsupported runtime and workspace providers during dispatch validation", () => {
+    const runtimeValidation = validateDispatchConfig(
+      resolveWorkflowConfig(
+        {
+          workflowPath: "/repo/WORKFLOW.md",
+          promptTemplate: "Prompt",
+          config: {
+            tracker: {
+              kind: "linear",
+              api_key: "token",
+              project_slug: "ENG",
+            },
+            agent_runtime: {
+              provider: "bogus",
+            },
+          },
+        },
+        {},
+      ),
+    );
+
+    expect(runtimeValidation).toEqual({
+      ok: false,
+      error: {
+        code: ERROR_CODES.configInvalid,
+        message: "agent_runtime.provider 'bogus' is not supported.",
+      },
+    });
+
+    const workspaceValidation = validateDispatchConfig(
+      resolveWorkflowConfig(
+        {
+          workflowPath: "/repo/WORKFLOW.md",
+          promptTemplate: "Prompt",
+          config: {
+            tracker: {
+              kind: "linear",
+              api_key: "token",
+              project_slug: "ENG",
+            },
+            workspace: {
+              provider: "bogus",
+            },
+          },
+        },
+        {},
+      ),
+    );
+
+    expect(workspaceValidation).toEqual({
+      ok: false,
+      error: {
+        code: ERROR_CODES.configInvalid,
+        message: "workspace.provider 'bogus' is not supported.",
       },
     });
   });

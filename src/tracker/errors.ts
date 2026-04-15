@@ -24,14 +24,19 @@ export class TrackerError extends Error {
   }
 }
 
-export function toTrackerRequestError(error: unknown): TrackerError {
-  if (error instanceof TrackerError) {
-    return error;
+export function toTrackerRequestError(input: {
+  error: unknown;
+  requestCode?: ErrorCode;
+  message?: string;
+}): TrackerError {
+  if (input.error instanceof TrackerError) {
+    return input.error;
   }
 
   return new TrackerError(
-    ERROR_CODES.linearApiRequest,
-    "Linear request failed before a valid response was received.",
-    { cause: error },
+    input.requestCode ?? ERROR_CODES.trackerRequestFailed,
+    input.message ??
+      "Tracker request failed before a valid response was received.",
+    { cause: input.error },
   );
 }

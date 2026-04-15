@@ -171,7 +171,6 @@ export class WorkflowWatcher {
         this.#environment,
       );
       const previousSnapshot = this.#currentSnapshot;
-      this.#currentSnapshot = snapshot;
 
       const result = {
         ok: true,
@@ -185,6 +184,8 @@ export class WorkflowWatcher {
         previousSnapshot,
         snapshot,
       });
+
+      this.#currentSnapshot = snapshot;
 
       return result;
     } catch (error) {

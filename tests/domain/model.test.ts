@@ -55,6 +55,14 @@ describe("domain model", () => {
 
   it("creates empty live session and orchestrator state baselines", () => {
     expect(createEmptyLiveSession()).toEqual({
+      processId: null,
+      agentProcessId: null,
+      lastAgentEvent: null,
+      lastAgentTimestamp: null,
+      lastAgentMessage: null,
+      agentInputTokens: 0,
+      agentOutputTokens: 0,
+      agentTotalTokens: 0,
       sessionId: null,
       threadId: null,
       turnId: null,

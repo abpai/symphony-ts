@@ -25,10 +25,13 @@ import {
   type RefreshResponse,
   startDashboardServer,
 } from "../observability/dashboard-server.js";
-import { LinearTrackerClient } from "../tracker/linear-client.js";
+import { createTrackerProvider } from "../tracker/interface.js";
 import type { IssueTracker } from "../tracker/tracker.js";
 import { WorkspaceHookRunner } from "../workspace/hooks.js";
-import { WorkspaceManager } from "../workspace/workspace-manager.js";
+import {
+  type WorkspaceProvider,
+  createWorkspaceProvider,
+} from "../workspace/interface.js";
 import type {
   OrchestratorCoreOptions,
   StopRequest,
@@ -52,7 +55,7 @@ export interface RuntimeHostOptions {
     onEvent: (event: AgentRunnerEvent) => void;
   }) => AgentRunnerLike;
   logger?: StructuredLogger;
-  workspaceManager?: WorkspaceManager;
+  workspaceProvider?: WorkspaceProvider;
   now?: () => Date;
 }
 
@@ -61,7 +64,7 @@ export interface RuntimeServiceOptions {
   logsRoot?: string | null;
   tracker?: IssueTracker;
   runtimeHost?: OrchestratorRuntimeHost;
-  workspaceManager?: WorkspaceManager;
+  workspaceProvider?: WorkspaceProvider;
   workflowWatcher?: WorkflowWatcher | null;
   now?: () => Date;
   logger?: StructuredLogger;
@@ -79,6 +82,7 @@ export interface RuntimeServiceHandle {
 interface WorkerExecution {
   issueId: string;
   issueIdentifier: string;
+  workspaceProvider: WorkspaceProvider;
   controller: AbortController;
   completion: Promise<void>;
   stopRequest: StopRequest | null;
@@ -97,29 +101,17 @@ export class RuntimeHostStartupError extends Error {
 
 export class OrchestratorRuntimeHost implements DashboardServerHost {
   private config: ResolvedWorkflowConfig;
-
   private tracker: IssueTracker;
-
-  private workspaceManager: WorkspaceManager;
-
+  private workspaceProvider: WorkspaceProvider;
   private agentRunner: AgentRunnerLike;
-
   private readonly now: () => Date;
-
   private readonly logger: StructuredLogger | null;
-
   private readonly workers = new Map<string, WorkerExecution>();
-
   private readonly orchestrator: OrchestratorCore;
-
   private readonly managesAgentRunner: boolean;
-
   private readonly agentEventSink: (event: AgentRunnerEvent) => void;
-
   private eventQueue: Promise<unknown> = Promise.resolve();
-
   private refreshQueued = false;
-
   private readonly snapshotListeners = new Set<() => void>();
 
   constructor(options: RuntimeHostOptions) {
@@ -127,12 +119,17 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
     this.tracker = options.tracker;
     this.now = options.now ?? (() => new Date());
     this.logger = options.logger ?? null;
-    this.workspaceManager =
-      options.workspaceManager ??
-      createWorkspaceManagerFromConfig(options.config, this.logger);
+    this.workspaceProvider =
+      options.workspaceProvider ??
+      createWorkspaceProviderFromConfig(options.config, this.logger);
     this.agentEventSink = (event) => {
       void this.enqueue(async () => {
-        this.orchestrator.onCodexEvent({
+        const runningEntry =
+          this.orchestrator.getState().running[event.issueId];
+        if (runningEntry !== undefined) {
+          runningEntry.workspacePath = event.workspacePath;
+        }
+        this.orchestrator.onAgentEvent({
           issueId: event.issueId,
           event,
         });
@@ -150,7 +147,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       this.createManagedAgentRunner({
         config: options.config,
         tracker: options.tracker,
-        workspaceManager: this.workspaceManager,
+        workspaceProvider: this.workspaceProvider,
       });
 
     const timerScheduler = createQueuedTimerScheduler({
@@ -188,7 +185,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
   updateConfig(input: {
     config: ResolvedWorkflowConfig;
     tracker?: IssueTracker;
-    workspaceManager?: WorkspaceManager;
+    workspaceProvider?: WorkspaceProvider;
   }): void {
     this.config = input.config;
 
@@ -197,8 +194,8 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       this.orchestrator.updateTracker(input.tracker);
     }
 
-    if (input.workspaceManager !== undefined) {
-      this.workspaceManager = input.workspaceManager;
+    if (input.workspaceProvider !== undefined) {
+      this.workspaceProvider = input.workspaceProvider;
     }
 
     this.orchestrator.updateConfig(input.config);
@@ -207,19 +204,9 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       this.agentRunner = this.createManagedAgentRunner({
         config: this.config,
         tracker: this.tracker,
-        workspaceManager: this.workspaceManager,
+        workspaceProvider: this.workspaceProvider,
       });
       return;
-    }
-
-    if (supportsConfigUpdate(this.agentRunner)) {
-      this.agentRunner.updateConfig({
-        config: this.config,
-        ...(input.tracker === undefined ? {} : { tracker: this.tracker }),
-        ...(input.workspaceManager === undefined
-          ? {}
-          : { workspaceManager: this.workspaceManager }),
-      });
     }
 
     this.notifySnapshotListeners();
@@ -258,7 +245,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       (entry) => entry.identifier === issueIdentifier,
     );
     if (running !== undefined) {
-      return toRunningIssueDetail(running, this.workspaceManager);
+      return toRunningIssueDetail(running, this.workspaceProvider);
     }
 
     const retry = Object.values(
@@ -317,6 +304,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
     const execution: WorkerExecution = {
       issueId: issue.id,
       issueIdentifier: issue.identifier,
+      workspaceProvider: this.workspaceProvider,
       controller,
       stopRequest: null,
       lastResult: null,
@@ -400,7 +388,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
     );
 
     if (execution.stopRequest?.cleanupWorkspace === true) {
-      await this.workspaceManager.removeForIssue(execution.issueId);
+      await execution.workspaceProvider.cleanup(execution.issueIdentifier);
     }
 
     this.orchestrator.onWorkerExit({
@@ -427,7 +415,7 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
       try {
         listener();
       } catch {
-        // Observability listeners must not affect runtime correctness.
+        // ignore observability listener failures
       }
     }
   }
@@ -435,12 +423,12 @@ export class OrchestratorRuntimeHost implements DashboardServerHost {
   private createManagedAgentRunner(input: {
     config: ResolvedWorkflowConfig;
     tracker: IssueTracker;
-    workspaceManager: WorkspaceManager;
+    workspaceProvider: WorkspaceProvider;
   }): AgentRunnerLike {
     return new AgentRunner({
       config: input.config,
       tracker: input.tracker,
-      workspaceManager: input.workspaceManager,
+      workspaceProvider: input.workspaceProvider,
       onEvent: this.agentEventSink,
     });
   }
@@ -463,27 +451,42 @@ export async function startRuntimeService(
       logsRoot: options.logsRoot ?? null,
       ...(options.stdout === undefined ? {} : { stdout: options.stdout }),
     }));
+
+  if (
+    options.config.workspace.provider === "local" &&
+    (options.config.agentRuntime?.provider ?? "stdio") === "http"
+  ) {
+    await logger.warn(
+      "local_workspace_http_runtime_warning",
+      "HTTP runtime with a local workspace may require shared filesystem access.",
+      {
+        outcome: "degraded",
+        reason: "local_workspace_http_runtime_warning",
+      },
+    );
+  }
+
   let currentConfig = options.config;
-  let tracker = options.tracker ?? createLinearTrackerFromConfig(currentConfig);
-  let workspaceManager =
-    options.workspaceManager ??
-    createWorkspaceManagerFromConfig(currentConfig, logger);
+  let tracker = options.tracker ?? createTrackerFromConfig(currentConfig);
+  let workspaceProvider =
+    options.workspaceProvider ??
+    createWorkspaceProviderFromConfig(currentConfig, logger);
   const runtimeHost =
     options.runtimeHost ??
     new OrchestratorRuntimeHost({
       config: currentConfig,
       tracker,
       logger,
-      workspaceManager,
+      workspaceProvider,
       ...(options.now === undefined ? {} : { now: options.now }),
     });
   const usesManagedTracker = options.tracker === undefined;
-  const usesManagedWorkspaceManager = options.workspaceManager === undefined;
+  const usesManagedWorkspaceProvider = options.workspaceProvider === undefined;
 
   await cleanupTerminalIssueWorkspaces({
     tracker,
     terminalStates: currentConfig.tracker.terminalStates,
-    workspaceManager,
+    workspaceProvider,
     logger,
   });
 
@@ -507,7 +510,6 @@ export async function startRuntimeService(
     if (stopController.signal.aborted) {
       return;
     }
-
     pollTimer = setTimeout(() => {
       void runPollCycle();
     }, currentConfig.polling.intervalMs);
@@ -546,11 +548,11 @@ export async function startRuntimeService(
             currentConfig = nextConfig;
 
             if (usesManagedTracker) {
-              tracker = createLinearTrackerFromConfig(nextConfig);
+              tracker = createTrackerFromConfig(nextConfig);
             }
 
-            if (usesManagedWorkspaceManager) {
-              workspaceManager = createWorkspaceManagerFromConfig(
+            if (usesManagedWorkspaceProvider) {
+              workspaceProvider = createWorkspaceProviderFromConfig(
                 nextConfig,
                 logger,
               );
@@ -559,7 +561,7 @@ export async function startRuntimeService(
             runtimeHost.updateConfig({
               config: nextConfig,
               ...(usesManagedTracker ? { tracker } : {}),
-              ...(usesManagedWorkspaceManager ? { workspaceManager } : {}),
+              ...(usesManagedWorkspaceProvider ? { workspaceProvider } : {}),
             });
 
             if (pollTimer !== null) {
@@ -631,6 +633,8 @@ export async function startRuntimeService(
   await logger.info("runtime_starting", "Symphony runtime started.", {
     poll_interval_ms: currentConfig.polling.intervalMs,
     max_concurrent_agents: currentConfig.agent.maxConcurrentAgents,
+    runtime_provider: currentConfig.agentRuntime?.provider ?? "stdio",
+    workspace_provider: currentConfig.workspace.provider,
     ...(dashboard === null ? {} : { port: dashboard.port }),
   });
 
@@ -717,6 +721,8 @@ async function createRuntimeWorkflowWatcher(input: {
         {
           poll_interval_ms: snapshot.config.polling.intervalMs,
           max_concurrent_agents: snapshot.config.agent.maxConcurrentAgents,
+          runtime_provider: snapshot.config.agentRuntime?.provider ?? "stdio",
+          workspace_provider: snapshot.config.workspace.provider,
         },
       );
     },
@@ -736,7 +742,7 @@ async function createRuntimeWorkflowWatcher(input: {
 async function cleanupTerminalIssueWorkspaces(input: {
   tracker: IssueTracker;
   terminalStates: string[];
-  workspaceManager: WorkspaceManager;
+  workspaceProvider: WorkspaceProvider;
   logger: StructuredLogger;
 }): Promise<void> {
   try {
@@ -745,7 +751,7 @@ async function cleanupTerminalIssueWorkspaces(input: {
     );
     await Promise.all(
       issues.map(async (issue) => {
-        await input.workspaceManager.removeForIssue(issue.id);
+        await input.workspaceProvider.cleanup(issue.identifier);
       }),
     );
   } catch (error) {
@@ -760,24 +766,20 @@ async function cleanupTerminalIssueWorkspaces(input: {
   }
 }
 
-function createLinearTrackerFromConfig(
-  config: ResolvedWorkflowConfig,
-): LinearTrackerClient {
-  return new LinearTrackerClient({
-    endpoint: config.tracker.endpoint,
-    apiKey: config.tracker.apiKey,
-    projectSlug: config.tracker.projectSlug,
-    activeStates: config.tracker.activeStates,
-  });
+function createTrackerFromConfig(config: ResolvedWorkflowConfig): IssueTracker {
+  return createTrackerProvider(config.tracker);
 }
 
-function createWorkspaceManagerFromConfig(
+function createWorkspaceProviderFromConfig(
   config: ResolvedWorkflowConfig,
   logger?: StructuredLogger | null,
-): WorkspaceManager {
-  return new WorkspaceManager({
-    root: config.workspace.root,
-    hooks: new WorkspaceHookRunner({
+): WorkspaceProvider {
+  return createWorkspaceProvider(config.workspace, {
+    hooksConfig: config.hooks,
+    logicalOnly:
+      (config.workspace.provider ?? "local") === "sandbox" &&
+      (config.agentRuntime?.provider ?? "stdio") === "http",
+    hookRunner: new WorkspaceHookRunner({
       config: config.hooks,
       ...(logger === undefined || logger === null
         ? {}
@@ -908,6 +910,7 @@ async function logAgentEvent(
     session_id: event.sessionId ?? null,
     thread_id: event.threadId ?? null,
     turn_id: event.turnId ?? null,
+    process_id: event.processId ?? null,
     attempt: event.attempt,
     workspace_path: event.workspacePath,
     ...(event.usage === undefined
@@ -941,35 +944,43 @@ function toHookMessageSuffix(
 
 function toRunningIssueDetail(
   running: RunningEntry,
-  workspaceManager: WorkspaceManager,
+  workspaceProvider: WorkspaceProvider,
 ): IssueDetailResponse {
   return {
     issue_identifier: running.identifier,
     issue_id: running.issue.id,
     status: "running",
     workspace: {
-      path: workspaceManager.resolveForIssue(running.issue.id).workspacePath,
+      path:
+        running.workspacePath ??
+        workspaceProvider.resolveForIssue(running.identifier).path,
     },
     attempts: {
       restart_count: running.retryAttempt ?? 0,
       current_retry_attempt: running.retryAttempt,
     },
     running: {
-      session_id: running.sessionId,
+      runtime_provider: running.runtimeProvider ?? "stdio",
+      process_id: running.agentProcessId ?? running.processId ?? null,
+      session_id: running.sessionId ?? null,
       turn_count: running.turnCount,
       state: running.issue.state,
       started_at: running.startedAt,
-      last_event: running.lastCodexEvent,
-      last_message: running.lastCodexMessage,
-      last_event_at: running.lastCodexTimestamp,
+      last_event: running.lastAgentEvent ?? running.lastCodexEvent ?? null,
+      last_message:
+        running.lastAgentMessage ?? running.lastCodexMessage ?? null,
+      last_event_at:
+        running.lastAgentTimestamp ?? running.lastCodexTimestamp ?? null,
       tokens: {
-        input_tokens: running.codexInputTokens,
-        output_tokens: running.codexOutputTokens,
-        total_tokens: running.codexTotalTokens,
+        input_tokens: running.agentInputTokens ?? running.codexInputTokens ?? 0,
+        output_tokens:
+          running.agentOutputTokens ?? running.codexOutputTokens ?? 0,
+        total_tokens: running.agentTotalTokens ?? running.codexTotalTokens ?? 0,
       },
     },
     retry: null,
     logs: {
+      agent_session_logs: [],
       codex_session_logs: [],
     },
     recent_events: [],
@@ -998,6 +1009,7 @@ function toRetryIssueDetail(
       error: retry.error,
     },
     logs: {
+      agent_session_logs: [],
       codex_session_logs: [],
     },
     recent_events: [],
@@ -1080,16 +1092,4 @@ function extractErrorCode(error: unknown): string | null {
   }
 
   return null;
-}
-
-function supportsConfigUpdate(
-  value: AgentRunnerLike,
-): value is AgentRunnerLike & {
-  updateConfig(input: {
-    config: ResolvedWorkflowConfig;
-    tracker?: IssueTracker;
-    workspaceManager?: WorkspaceManager;
-  }): void;
-} {
-  return "updateConfig" in value && typeof value.updateConfig === "function";
 }

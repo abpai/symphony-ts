@@ -370,12 +370,11 @@ export function renderDashboardHtml(
   snapshot: RuntimeSnapshot,
   options: DashboardRenderOptions,
 ): string {
-  const initialRuntimeLabel = formatRuntimeSeconds(
-    snapshot.codex_totals.seconds_running,
-  );
-  const totalTokensLabel = formatInteger(snapshot.codex_totals.total_tokens);
-  const inputTokensLabel = formatInteger(snapshot.codex_totals.input_tokens);
-  const outputTokensLabel = formatInteger(snapshot.codex_totals.output_tokens);
+  const totals = snapshot.agent_totals ?? snapshot.codex_totals;
+  const initialRuntimeLabel = formatRuntimeSeconds(totals.seconds_running);
+  const totalTokensLabel = formatInteger(totals.total_tokens);
+  const inputTokensLabel = formatInteger(totals.input_tokens);
+  const outputTokensLabel = formatInteger(totals.output_tokens);
   const initialRateLimits = prettyValue(snapshot.rate_limits);
 
   return `<!doctype html>
@@ -473,7 +472,7 @@ ${DASHBOARD_STYLES}
                   <th>State</th>
                   <th>Session</th>
                   <th>Runtime / turns</th>
-                  <th>Codex update</th>
+                  <th>Agent update / Codex update</th>
                   <th>Tokens</th>
                 </tr>
               </thead>
@@ -650,9 +649,10 @@ function renderDashboardClientScript(
           document.getElementById('generated-at').textContent = 'Generated at ' + next.generated_at;
           document.getElementById('metric-running').textContent = String(next.counts.running);
           document.getElementById('metric-retrying').textContent = String(next.counts.retrying);
-          document.getElementById('metric-total').textContent = formatInteger(next.codex_totals.total_tokens);
-          document.getElementById('metric-total-detail').textContent = 'In ' + formatInteger(next.codex_totals.input_tokens) + ' / Out ' + formatInteger(next.codex_totals.output_tokens);
-          document.getElementById('metric-runtime').textContent = formatRuntimeSeconds(next.codex_totals.seconds_running);
+          const totals = next.agent_totals || next.codex_totals;
+          document.getElementById('metric-total').textContent = formatInteger(totals.total_tokens);
+          document.getElementById('metric-total-detail').textContent = 'In ' + formatInteger(totals.input_tokens) + ' / Out ' + formatInteger(totals.output_tokens);
+          document.getElementById('metric-runtime').textContent = formatRuntimeSeconds(totals.seconds_running);
           document.getElementById('running-rows').innerHTML = renderRunningRows(next);
           document.getElementById('retry-rows').innerHTML = renderRetryRows(next);
           document.getElementById('rate-limits').textContent = prettyValue(next.rate_limits);
@@ -711,11 +711,16 @@ function renderRunningRows(snapshot: RuntimeSnapshot): string {
                   }
                 </div>
               </td>
-              <td class="numeric">${formatRuntimeAndTurns(
-                row.started_at,
-                row.turn_count,
-                snapshot.generated_at,
-              )}</td>
+              <td>
+                <div class="detail-stack">
+                  <span class="mono">${escapeHtml(row.runtime_provider ?? "stdio")}</span>
+                  <span class="muted numeric">${formatRuntimeAndTurns(
+                    row.started_at,
+                    row.turn_count,
+                    snapshot.generated_at,
+                  )}</span>
+                </div>
+              </td>
               <td>
                 <div class="detail-stack">
                   <span class="event-text" title="${escapeHtml(

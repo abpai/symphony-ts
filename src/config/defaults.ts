@@ -11,10 +11,20 @@ export const DEFAULT_TERMINAL_STATES = [
   "Duplicate",
   "Done",
 ] as const;
+export const DEFAULT_JIRA_ACTIVE_STATES = ["To Do", "In Progress"] as const;
+export const DEFAULT_JIRA_TERMINAL_STATES = [
+  "Done",
+  "Closed",
+  "Cancelled",
+  "Canceled",
+  "Duplicate",
+] as const;
 
 export const DEFAULT_POLL_INTERVAL_MS = 30_000;
 export const DEFAULT_WORKSPACE_ROOT = join(tmpdir(), "symphony_workspaces");
+export const DEFAULT_WORKSPACE_PROVIDER = "local" as const;
 export const DEFAULT_HOOK_TIMEOUT_MS = 60_000;
+export const DEFAULT_SANDBOX_IDLE_TIMEOUT_MS = 300_000;
 
 export const DEFAULT_MAX_CONCURRENT_AGENTS = 10;
 export const DEFAULT_MAX_TURNS = 20;
@@ -24,9 +34,12 @@ export const DEFAULT_MAX_CONCURRENT_AGENTS_BY_STATE = Object.freeze(
 ) as Readonly<Record<string, number>>;
 
 export const DEFAULT_CODEX_COMMAND = "codex app-server";
+export const DEFAULT_AGENT_RUNTIME_PROVIDER = "stdio" as const;
 export const DEFAULT_TURN_TIMEOUT_MS = 3_600_000;
 export const DEFAULT_READ_TIMEOUT_MS = 5_000;
 export const DEFAULT_STALL_TIMEOUT_MS = 300_000;
+export const DEFAULT_AGENT_RUNTIME_AUTO_COMMIT = true;
+export const DEFAULT_AGENT_RUNTIME_AUTO_PR = true;
 export const DEFAULT_OBSERVABILITY_ENABLED = true;
 export const DEFAULT_OBSERVABILITY_REFRESH_MS = 1_000;
 export const DEFAULT_OBSERVABILITY_RENDER_INTERVAL_MS = 16;
@@ -49,7 +62,9 @@ export const SPEC_DEFAULTS = Object.freeze({
     intervalMs: DEFAULT_POLL_INTERVAL_MS,
   },
   workspace: {
+    provider: DEFAULT_WORKSPACE_PROVIDER,
     root: DEFAULT_WORKSPACE_ROOT,
+    sandboxIdleTimeoutMs: DEFAULT_SANDBOX_IDLE_TIMEOUT_MS,
   },
   hooks: {
     timeoutMs: DEFAULT_HOOK_TIMEOUT_MS,
@@ -65,6 +80,16 @@ export const SPEC_DEFAULTS = Object.freeze({
     turnTimeoutMs: DEFAULT_TURN_TIMEOUT_MS,
     readTimeoutMs: DEFAULT_READ_TIMEOUT_MS,
     stallTimeoutMs: DEFAULT_STALL_TIMEOUT_MS,
+  },
+  agentRuntime: {
+    provider: DEFAULT_AGENT_RUNTIME_PROVIDER,
+    command: DEFAULT_CODEX_COMMAND,
+    turnTimeoutMs: DEFAULT_TURN_TIMEOUT_MS,
+    readTimeoutMs: DEFAULT_READ_TIMEOUT_MS,
+    stallTimeoutMs: DEFAULT_STALL_TIMEOUT_MS,
+    maxTurns: DEFAULT_MAX_TURNS,
+    autoCommit: DEFAULT_AGENT_RUNTIME_AUTO_COMMIT,
+    autoPr: DEFAULT_AGENT_RUNTIME_AUTO_PR,
   },
   observability: {
     dashboardEnabled: DEFAULT_OBSERVABILITY_ENABLED,
