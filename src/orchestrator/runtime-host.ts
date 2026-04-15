@@ -25,6 +25,7 @@ import {
   type RefreshResponse,
   startDashboardServer,
 } from "../observability/dashboard-server.js";
+import { TrackerError } from "../tracker/errors.js";
 import { LinearTrackerClient } from "../tracker/linear-client.js";
 import type { IssueTracker } from "../tracker/tracker.js";
 import { WorkspaceHookRunner } from "../workspace/hooks.js";
@@ -465,6 +466,7 @@ export async function startRuntimeService(
     }));
   let currentConfig = options.config;
   let tracker = options.tracker ?? createLinearTrackerFromConfig(currentConfig);
+  await ensureTrackerStartupAccess(tracker, options);
   let workspaceManager =
     options.workspaceManager ??
     createWorkspaceManagerFromConfig(currentConfig, logger);
@@ -756,6 +758,28 @@ async function cleanupTerminalIssueWorkspaces(input: {
         outcome: "degraded",
         reason: "startup_terminal_cleanup_failed",
       },
+    );
+  }
+}
+
+async function ensureTrackerStartupAccess(
+  tracker: IssueTracker,
+  options: RuntimeServiceOptions,
+): Promise<void> {
+  if (
+    !(tracker instanceof LinearTrackerClient) ||
+    options.tracker !== undefined
+  ) {
+    return;
+  }
+
+  try {
+    await tracker.verifyAccess();
+  } catch (error) {
+    throw new RuntimeHostStartupError(
+      `Failed to verify Linear access during startup: ${toErrorMessage(error)}`,
+      error instanceof TrackerError ? error.code : ERROR_CODES.cliStartupFailed,
+      { cause: error },
     );
   }
 }

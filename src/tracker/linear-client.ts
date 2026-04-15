@@ -16,6 +16,14 @@ import {
 } from "./linear-queries.js";
 import type { IssueStateSnapshot, IssueTracker } from "./tracker.js";
 
+const LINEAR_VIEWER_QUERY = `
+  query SymphonyViewer {
+    viewer {
+      id
+    }
+  }
+`;
+
 interface LinearGraphqlPageInfo {
   hasNextPage?: unknown;
   endCursor?: unknown;
@@ -138,6 +146,10 @@ export class LinearTrackerClient implements IssueTracker {
       status: response.status,
       body,
     };
+  }
+
+  async verifyAccess(): Promise<void> {
+    await this.postGraphql(LINEAR_VIEWER_QUERY, {});
   }
 
   private async fetchIssuePages(

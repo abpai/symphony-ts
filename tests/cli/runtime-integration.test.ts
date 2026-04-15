@@ -253,6 +253,38 @@ Prompt body
     } satisfies Partial<RuntimeHostStartupError>);
   });
 
+  it("fails startup when managed Linear credentials cannot be verified", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("unauthorized", { status: 401 }));
+
+    try {
+      await expect(
+        startRuntimeService({
+          config: createConfig({
+            tracker: {
+              kind: "linear",
+              endpoint: "https://api.linear.app/graphql",
+              apiKey: "bad-token",
+              projectSlug: "ENG",
+              activeStates: ["Todo"],
+              terminalStates: ["Done"],
+            },
+          }),
+          stdout: new PassThrough(),
+        }),
+      ).rejects.toMatchObject({
+        name: "RuntimeHostStartupError",
+        code: "linear_api_status",
+        message:
+          "Failed to verify Linear access during startup: Linear API request failed with HTTP 401.",
+      } satisfies Partial<RuntimeHostStartupError>);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("logs operator-visible warnings when a poll tick cannot fetch candidate issues", async () => {
     const stdout = new PassThrough();
     let output = "";
