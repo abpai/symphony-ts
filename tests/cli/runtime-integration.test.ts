@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CLI_ACKNOWLEDGEMENT_FLAG, runCli } from "../../src/cli/main.js";
+import { runCli } from "../../src/cli/main.js";
 import { resolveWorkflowConfig } from "../../src/config/config-resolver.js";
 import type { ResolvedWorkflowConfig } from "../../src/config/types.js";
 import { loadWorkflowDefinition } from "../../src/config/workflow-loader.js";
@@ -128,31 +128,28 @@ Prompt body
     const tracker = createTracker({
       candidates: [],
     });
-    const exitCode = await runCli(
-      ["WORKFLOW.md", CLI_ACKNOWLEDGEMENT_FLAG, "--port", "0"],
-      {
-        cwd: root,
-        env: {},
-        io: {
-          stdout: vi.fn(),
-          stderr,
-        },
-        startHost: async ({ runtime }) => {
-          const runtimeHost = new ThrowingRuntimeHost({
-            config: runtime.config,
-            tracker,
-          });
-
-          return await startRuntimeService({
-            config: runtime.config,
-            logsRoot: runtime.logsRoot,
-            tracker,
-            runtimeHost,
-            stdout: new PassThrough(),
-          });
-        },
+    const exitCode = await runCli(["WORKFLOW.md", "--port", "0"], {
+      cwd: root,
+      env: {},
+      io: {
+        stdout: vi.fn(),
+        stderr,
       },
-    );
+      startHost: async ({ runtime }) => {
+        const runtimeHost = new ThrowingRuntimeHost({
+          config: runtime.config,
+          tracker,
+        });
+
+        return await startRuntimeService({
+          config: runtime.config,
+          logsRoot: runtime.logsRoot,
+          tracker,
+          runtimeHost,
+          stdout: new PassThrough(),
+        });
+      },
+    });
 
     expect(exitCode).toBe(1);
     expect(stderr).toHaveBeenCalledWith(
@@ -190,14 +187,7 @@ Prompt body
       logsRoot: null,
     };
     const exitCode = await runCli(
-      [
-        "config/WORKFLOW.md",
-        CLI_ACKNOWLEDGEMENT_FLAG,
-        "--logs-root",
-        "./runtime-logs",
-        "--port",
-        "0",
-      ],
+      ["config/WORKFLOW.md", "--logs-root", "./runtime-logs", "--port", "0"],
       {
         cwd: root,
         env: {},

@@ -206,17 +206,14 @@ The prompt body uses **Liquid template syntax**. Available variables:
 
 ```bash
 # Run from the directory containing WORKFLOW.md
-node dist/src/cli/main.js --acknowledge-high-trust-preview
+node dist/src/cli/main.js
 
 # Or specify the WORKFLOW.md path explicitly
-node dist/src/cli/main.js /path/to/your/WORKFLOW.md \
-  --acknowledge-high-trust-preview
+node dist/src/cli/main.js /path/to/your/WORKFLOW.md
 
 # Enable the optional HTTP dashboard
-node dist/src/cli/main.js --acknowledge-high-trust-preview --port 3000
+node dist/src/cli/main.js --port 3000
 ```
-
-> `--acknowledge-high-trust-preview` is a required safety flag. Symphony runs agent code without sandboxing by default; this flag confirms you understand that.
 
 ### Environment and networked CLI note
 

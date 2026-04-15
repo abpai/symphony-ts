@@ -19,7 +19,6 @@ export interface CliOptions {
   workflowPath: string | null;
   logsRoot: string | null;
   port: number | null;
-  acknowledged: boolean;
   help: boolean;
 }
 
@@ -65,7 +64,6 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   let workflowPath: string | null = null;
   let logsRoot: string | null = null;
   let port: number | null = null;
-  let acknowledged = false;
   let help = false;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -91,7 +89,8 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     }
 
     if (token === CLI_ACKNOWLEDGEMENT_FLAG) {
-      acknowledged = true;
+      // Accept the legacy high-trust preview flag as a no-op so existing
+      // launch scripts continue to work while the startup requirement is removed.
       continue;
     }
 
@@ -123,7 +122,6 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     workflowPath,
     logsRoot,
     port,
-    acknowledged,
     help,
   };
 }
@@ -181,13 +179,6 @@ export async function runCli(
   if (options.help) {
     io.stdout(renderUsage());
     return 0;
-  }
-
-  if (!options.acknowledged) {
-    io.stderr(
-      `Refusing to start without ${CLI_ACKNOWLEDGEMENT_FLAG}. Symphony is a high-trust preview intended for trusted environments.\n`,
-    );
-    return 1;
   }
 
   try {
@@ -278,7 +269,6 @@ function renderUsage(): string {
     "Usage: symphony [path-to-WORKFLOW.md] [options]",
     "",
     "Options:",
-    `  ${CLI_ACKNOWLEDGEMENT_FLAG}  required before startup`,
     "  --logs-root <path>           override the logs root directory",
     "  --port <number>              override the HTTP server port",
     "  --help                       show this help text",

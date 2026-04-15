@@ -42,19 +42,19 @@ symphony --help
 ```bash
 cd /path/to/your-repo
 export LINEAR_API_KEY=your-linear-token
-symphony ./WORKFLOW.md --acknowledge-high-trust-preview --port 4321
+symphony ./WORKFLOW.md --port 4321
 ```
 
 If you do not pass a path, Symphony defaults to `./WORKFLOW.md`:
 
 ```bash
-symphony --acknowledge-high-trust-preview --port 4321
+symphony --port 4321
 ```
 
 You can also run without global install:
 
 ```bash
-npx symphony-ts ./WORKFLOW.md --acknowledge-high-trust-preview --port 4321
+npx symphony-ts ./WORKFLOW.md --port 4321
 ```
 
 Symphony does not generate `WORKFLOW.md` for you. It expects a repository-owned workflow file and,
@@ -69,7 +69,7 @@ Set up and start Symphony in this repository.
 Requirements:
 - create or update WORKFLOW.md for Linear
 - use LINEAR_API_KEY from the environment or tell me exactly which variable is missing
-- install symphony-ts and start Symphony with the required --acknowledge-high-trust-preview flag
+- install symphony-ts and start Symphony
 - if startup fails, stop and report the exact failing step and command
 ```
 
@@ -165,7 +165,7 @@ If you are developing Symphony itself rather than using the published CLI:
 ```bash
 pnpm install
 pnpm build
-node dist/src/cli/main.js --acknowledge-high-trust-preview
+node dist/src/cli/main.js
 ```
 
 See [docs/DEV_GUIDE.md](docs/DEV_GUIDE.md) for a full walkthrough including Linear setup, `WORKFLOW.md` configuration, and troubleshooting.

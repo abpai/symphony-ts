@@ -28,7 +28,6 @@ describe("cli", () => {
       workflowPath: "config/WORKFLOW.md",
       logsRoot: "./logs",
       port: 8080,
-      acknowledged: true,
       help: false,
     });
   });
@@ -53,7 +52,6 @@ describe("cli", () => {
         workflowPath: null,
         logsRoot: "./runtime-logs",
         port: 8080,
-        acknowledged: true,
         help: false,
       },
       "/repo",
@@ -98,7 +96,7 @@ describe("cli", () => {
       },
     }));
 
-    const exitCode = await runCli([CLI_ACKNOWLEDGEMENT_FLAG], {
+    const exitCode = await runCli([], {
       cwd: workspace,
       env: {},
       startHost,
@@ -116,29 +114,31 @@ describe("cli", () => {
     );
   });
 
-  it("returns nonzero and skips startup when acknowledgement is missing", async () => {
-    const stderr = vi.fn();
-    const startHost = vi.fn();
+  it("starts without requiring the legacy acknowledgement flag", async () => {
+    const startHost = vi.fn(async () => ({
+      async waitForExit() {
+        return 0;
+      },
+    }));
 
     const exitCode = await runCli([], {
-      io: {
-        stdout: vi.fn(),
-        stderr,
-      },
+      env: {},
+      loadWorkflowDefinition: vi.fn(async () => ({
+        workflowPath: "/repo/WORKFLOW.md",
+        config: {},
+        promptTemplate: "Prompt",
+      })),
       startHost,
     });
 
-    expect(exitCode).toBe(1);
-    expect(startHost).not.toHaveBeenCalled();
-    expect(stderr).toHaveBeenCalledWith(
-      expect.stringContaining(CLI_ACKNOWLEDGEMENT_FLAG),
-    );
+    expect(exitCode).toBe(0);
+    expect(startHost).toHaveBeenCalledOnce();
   });
 
   it("returns nonzero when the workflow file is missing", async () => {
     const stderr = vi.fn();
 
-    const exitCode = await runCli(["missing.md", CLI_ACKNOWLEDGEMENT_FLAG], {
+    const exitCode = await runCli(["missing.md"], {
       io: {
         stdout: vi.fn(),
         stderr,
@@ -175,7 +175,7 @@ describe("cli", () => {
   it("returns nonzero when startup fails or the host exits abnormally", async () => {
     const stderr = vi.fn();
 
-    const startupFailure = await runCli([CLI_ACKNOWLEDGEMENT_FLAG], {
+    const startupFailure = await runCli([], {
       io: {
         stdout: vi.fn(),
         stderr,
@@ -191,7 +191,7 @@ describe("cli", () => {
       }),
     });
 
-    const abnormalExit = await runCli([CLI_ACKNOWLEDGEMENT_FLAG], {
+    const abnormalExit = await runCli([], {
       io: {
         stdout: vi.fn(),
         stderr,
