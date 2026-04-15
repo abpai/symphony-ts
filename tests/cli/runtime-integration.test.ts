@@ -128,31 +128,28 @@ Prompt body
     const tracker = createTracker({
       candidates: [],
     });
-    const exitCode = await runCli(
-      ["WORKFLOW.md", CLI_ACKNOWLEDGEMENT_FLAG, "--port", "0"],
-      {
-        cwd: root,
-        env: {},
-        io: {
-          stdout: vi.fn(),
-          stderr,
-        },
-        startHost: async ({ runtime }) => {
-          const runtimeHost = new ThrowingRuntimeHost({
-            config: runtime.config,
-            tracker,
-          });
-
-          return await startRuntimeService({
-            config: runtime.config,
-            logsRoot: runtime.logsRoot,
-            tracker,
-            runtimeHost,
-            stdout: new PassThrough(),
-          });
-        },
+    const exitCode = await runCli(["WORKFLOW.md", "--port", "0"], {
+      cwd: root,
+      env: {},
+      io: {
+        stdout: vi.fn(),
+        stderr,
       },
-    );
+      startHost: async ({ runtime }) => {
+        const runtimeHost = new ThrowingRuntimeHost({
+          config: runtime.config,
+          tracker,
+        });
+
+        return await startRuntimeService({
+          config: runtime.config,
+          logsRoot: runtime.logsRoot,
+          tracker,
+          runtimeHost,
+          stdout: new PassThrough(),
+        });
+      },
+    });
 
     expect(exitCode).toBe(1);
     expect(stderr).toHaveBeenCalledWith(
