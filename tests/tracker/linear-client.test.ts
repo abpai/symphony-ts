@@ -149,6 +149,11 @@ describe("LinearTrackerClient", () => {
         code: ERROR_CODES.missingTrackerApiKey,
       }),
     );
+    await expect(missingApiKeyClient.verifyAccess()).rejects.toThrow(
+      expect.objectContaining<Partial<TrackerError>>({
+        code: ERROR_CODES.missingTrackerApiKey,
+      }),
+    );
     await expect(missingProjectClient.fetchCandidateIssues()).rejects.toThrow(
       expect.objectContaining<Partial<TrackerError>>({
         code: ERROR_CODES.missingTrackerProjectSlug,
@@ -237,6 +242,25 @@ describe("LinearTrackerClient", () => {
         code: ERROR_CODES.linearApiRequest,
       }),
     );
+  });
+
+  it("verifies Linear access with a startup probe", async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        data: {
+          viewer: {
+            id: "viewer-1",
+          },
+        },
+      }),
+    );
+    const client = createClient({ fetchFn });
+
+    await expect(client.verifyAccess()).resolves.toBeUndefined();
+
+    const request = parseRequestBody(fetchFn.mock.calls[0]?.[1]);
+    expect(request.query).toContain("query SymphonyViewer");
+    expect(request.variables).toEqual({});
   });
 });
 
